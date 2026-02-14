@@ -177,12 +177,70 @@
             color: #888;
             margin-top: 5px;
         }
+        #focus-popup-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        #focus-popup-overlay.active {
+            display: flex;
+        }
+        #focus-popup {
+            width: min(380px, 90vw);
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+        #focus-popup h2 {
+            margin: 0 0 8px 0;
+            font-size: 20px;
+            color: #1a1d21;
+        }
+        #focus-popup p {
+            margin: 0 0 16px 0;
+            font-size: 14px;
+            color: #4a4f55;
+        }
+        #focus-popup .popup-actions {
+            display: flex;
+            gap: 10px;
+        }
+        #focus-popup .popup-actions button {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+        #focus-game-btn {
+            background: #0b65c2;
+            color: #fff;
+        }
+        #focus-close-btn {
+            background: #e9edf2;
+            color: #1a1d21;
+        }
     </style>
 </head>
 <body>
     <div id="zmmtg-root"></div>
     <video id="eye-video" playsinline></video>
     <canvas id="eye-overlay"></canvas>
+    <div id="focus-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="focus-popup-title">
+        <div id="focus-popup">
+            <h2 id="focus-popup-title">Claude: Quick focus check</h2>
+            <p>Looks like your attention drifted. Want a 20-second focus game?</p>
+            <div class="popup-actions">
+                <button id="focus-game-btn" type="button">Open focus game</button>
+                <button id="focus-close-btn" type="button">I am back</button>
+            </div>
+        </div>
+    </div>
     
     <div class="container" id="join-form">
         <h1>🎥 Join Zoom Meeting</h1>

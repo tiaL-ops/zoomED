@@ -2,8 +2,10 @@
   "name": "server",
   "version": "1.0.0",
   "description": "node/express backend including websocket\r implements all server, web socket, and multi-agent system logic",
+  "type": "module",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

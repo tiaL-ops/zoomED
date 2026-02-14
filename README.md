@@ -2,7 +2,7 @@ yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
 
 ---
 
-# need to fix zoom if someone manages to do it
+# zoom working but very basic, need to figure out how to record meeting 
 
 in the meantime:
 
@@ -28,7 +28,8 @@ npm run dev
 cd server  
 node index.js
 ```
-
+**zoomap**
+is its own cuz i was not sure it will work. very messy
 ---
 
 current pages

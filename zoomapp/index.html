@@ -1,32 +1,134 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
-  <head>
-    <meta charset="utf-8" />
-    <title>Zoom Meeting SDK Sample JavaScript</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <main>
-      <h1>Zoom Meeting SDK Sample JavaScript</h1>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zoom Meeting SDK - TreeHacks 2026</title>
+    <link type="text/css" rel="stylesheet" href="https://source.zoom.us/3.8.10/css/bootstrap.css" />
+    <link type="text/css" rel="stylesheet" href="https://source.zoom.us/3.8.10/css/react-select.css" />
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 0;
+        
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 30px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            box-sizing: border-box;
+            transition: border 0.3s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+          
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        #zmmtg-root {
+            display: none;
+        }
+        .error {
+            color: #e74c3c;
+            font-size: 14px;
+            margin-top: 10px;
+        }
+        .note {
+            font-size: 12px;
+            color: #888;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="zmmtg-root"></div>
+    
+    <div class="container" id="join-form">
+        <h1>🎥 Join Zoom Meeting</h1>
+        
+        <div class="form-group">
+            <label for="meeting-number">Meeting ID</label>
+            <input type="text" id="meeting-number" placeholder="123 456 7890" value="89247964461">
+            <div class="note">Enter the 9-11 digit meeting ID</div>
+        </div>
+        
+        <div class="form-group">
+            <label for="meeting-password">Passcode (Optional)</label>
+            <input type="text" id="meeting-password" placeholder="Meeting passcode" value="cD86BY">
+        </div>
+        
+        <div class="form-group">
+            <label for="user-name">Your Name</label>
+            <input type="text" id="user-name" placeholder="Enter your name" value="TreeHacks Participant">
+        </div>
+        
+        <div class="form-group">
+            <label for="user-role">Join As</label>
+            <select id="user-role">
+                <option value="0">Attendee</option>
+                <option value="1">Host</option>
+            </select>
+        </div>
+        
+        <button id="join-button" onclick="joinMeeting()">Join Meeting</button>
+        
+        <div id="error-message" class="error"></div>
+    </div>
 
-      <!-- For Component View -->
-      <div id="meetingSDKElement">
-        <!-- Zoom Meeting SDK Rendered Here -->
-      </div>
-
-      <button onClick="getSignature()">Join Meeting</button>
-    </main>
-
-    <!-- Dependencies for client view and component view -->
-    <script src="https://source.zoom.us/4.0.0/lib/vendor/react.min.js"></script>
-    <script src="https://source.zoom.us/4.0.0/lib/vendor/react-dom.min.js"></script>
-    <script src="https://source.zoom.us/4.0.0/lib/vendor/redux.min.js"></script>
-    <script src="https://source.zoom.us/4.0.0/lib/vendor/redux-thunk.min.js"></script>
-    <script src="https://source.zoom.us/4.0.0/lib/vendor/lodash.min.js"></script>
-
-    <!-- For Client View -->
-    <script src="https://source.zoom.us/zoom-meeting-4.0.0.min.js"></script>
-    <script type="text/javascript" src="client-view.js"></script>
+    <script src="https://source.zoom.us/3.8.10/lib/vendor/react.min.js"></script>
+    <script src="https://source.zoom.us/3.8.10/lib/vendor/react-dom.min.js"></script>
+    <script src="https://source.zoom.us/3.8.10/lib/vendor/redux.min.js"></script>
+    <script src="https://source.zoom.us/3.8.10/lib/vendor/redux-thunk.min.js"></script>
+    <script src="https://source.zoom.us/3.8.10/lib/vendor/lodash.min.js"></script>
+    <script src="https://source.zoom.us/zoom-meeting-3.8.10.min.js"></script>
+    
+    <script src="app.js"></script>
+</body>
+</html>
 
     <!-- For Component View -->
     <!-- <script src="https://source.zoom.us/4.0.0/zoom-meeting-embedded-4.0.0.min.js"></script>

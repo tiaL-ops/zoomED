@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Webcam Toggle</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; padding: 20px; }
+        video { width: 100%; max-width: 600px; background: #000; border-radius: 10px; transform: scaleX(-1); } /* Mirror mode */
+        .buttons { margin-top: 15px; }
+        button { padding: 12px 24px; font-size: 1rem; cursor: pointer; border: none; border-radius: 5px; margin: 5px; }
+        .start { background: #28a745; color: white; }
+        .stop { background: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+
+    <h2>Webcam Control</h2>
+    <video id="webcam" autoplay playsinline></video>
+
+    <div class="buttons">
+        <button class="start" onclick="startCamera()">Start Camera</button>
+        <button class="stop" onclick="stopCamera()">Close Camera</button>
+    </div>
+
+    <script>
+        let stream = null;
+
+        async function startCamera() {
+            try {
+                // Request camera access
+                stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                const videoElement = document.getElementById('webcam');
+                videoElement.srcObject = stream;
+            } catch (err) {
+                console.error("Error accessing webcam: ", err);
+                alert("Could not access camera. Check permissions!");
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                // This stops the actual hardware (the light turns off)
+                stream.getTracks().forEach(track => track.stop());
+                
+                // Clear the video element
+                const videoElement = document.getElementById('webcam');
+                videoElement.srcObject = null;
+                stream = null;
+            }
+        }
+    </script>
+
+</body>
+</html>

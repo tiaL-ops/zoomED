@@ -30,6 +30,23 @@ node index.js
 ```
 **zoomap**
 is its own cuz i was not sure it will work. very messy
+to run zoom app :
+
+```
+cd zoomapp/meetingsdk-auth-endpoint-sample
+npm install
+npm start
+```
+
+new terminal:
+
+```
+cd zoomapp
+npx serve -p 8080
+```
+
+open http://localhost:8080
+
 ---
 
 current pages

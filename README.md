@@ -1,25 +1,42 @@
-yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay 
+yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
 
-# need to fix zoom if someone one manage to do it.
- 
- In the meantime create a very samplevideo, and use the recording.
- Right now detect the image use media pipe library.
- Connected to express 
+---
 
- --> what cana we try for now:
- have a mock datasetready from zoom.
+# need to fix zoom if someone manages to do it
 
+in the meantime:
 
-# To run :
+* created a simple sample video
+* detect the image using **MediaPipe**
+* connect everything to **Express**
+* used a mock dataset that simulates zoom data
 
- Front:
- cd client
+---
+
+# to run
+
+**front**
+
+```
+cd client  
 npm run dev
+```
 
-Back
-cd server
+**back**
+
+```
+cd server  
 node index.js
+```
 
-## current page:
-/videoapp --> see the engagement 
-/poll --> baded on fake data 
+---
+
+current pages
+
+* `/videoapp` → see engagement
+* `/poll` → based on fake data
+
+---
+
+to use Claude:
+go to [https://platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) and create your API key

@@ -8,6 +8,11 @@ const authEndpoint = "http://localhost:4000";
 const leaveUrl = window.location.origin;
 let eyeTracker = null;
 let lastAttentionLogMs = 0;
+let unfocusedSinceMs = null;
+let lastFocusPopupMs = 0;
+const FOCUS_POPUP_COOLDOWN_MS = 30000;
+const UNFOCUSED_TRIGGER_MS = 3000;
+const FOCUS_GAME_URL = "http://localhost:5173/videoapp";
 
 function showError(message) {
   const errorDiv = document.getElementById("error-message");
@@ -134,6 +139,56 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
       right: rightIrisRatio === null ? null : Number(rightIrisRatio.toFixed(3)),
     },
   });
+
+  updateFocusPopup(state);
+}
+
+function getFocusPopupElements() {
+  return {
+    overlay: document.getElementById("focus-popup-overlay"),
+    gameButton: document.getElementById("focus-game-btn"),
+    closeButton: document.getElementById("focus-close-btn"),
+  };
+}
+
+function showFocusPopup() {
+  const { overlay } = getFocusPopupElements();
+  if (!overlay) {
+    return;
+  }
+  overlay.classList.add("active");
+}
+
+function hideFocusPopup() {
+  const { overlay } = getFocusPopupElements();
+  if (!overlay) {
+    return;
+  }
+  overlay.classList.remove("active");
+}
+
+function updateFocusPopup(state) {
+  const now = Date.now();
+  if (state === "focused") {
+    unfocusedSinceMs = null;
+    hideFocusPopup();
+    return;
+  }
+
+  if (state !== "bored" && state !== "distracted") {
+    return;
+  }
+
+  if (!unfocusedSinceMs) {
+    unfocusedSinceMs = now;
+  }
+
+  const unfocusedDuration = now - unfocusedSinceMs;
+  const canShow = now - lastFocusPopupMs > FOCUS_POPUP_COOLDOWN_MS;
+  if (unfocusedDuration >= UNFOCUSED_TRIGGER_MS && canShow) {
+    lastFocusPopupMs = now;
+    showFocusPopup();
+  }
 }
 
 function startEyeTracking() {
@@ -223,6 +278,31 @@ function startEyeTracking() {
       window.removeEventListener("resize", resizeCanvas);
     },
   };
+
+  const { gameButton, closeButton, overlay } = getFocusPopupElements();
+  if (gameButton && !gameButton.dataset.bound) {
+    gameButton.addEventListener("click", () => {
+      window.open(FOCUS_GAME_URL, "_blank", "noopener,noreferrer");
+      hideFocusPopup();
+    });
+    gameButton.dataset.bound = "true";
+  }
+  if (closeButton && !closeButton.dataset.bound) {
+    closeButton.addEventListener("click", () => {
+      hideFocusPopup();
+      unfocusedSinceMs = Date.now();
+    });
+    closeButton.dataset.bound = "true";
+  }
+  if (overlay && !overlay.dataset.bound) {
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        hideFocusPopup();
+        unfocusedSinceMs = Date.now();
+      }
+    });
+    overlay.dataset.bound = "true";
+  }
 }
 
 function stopEyeTracking() {
@@ -234,6 +314,8 @@ function stopEyeTracking() {
   } finally {
     eyeTracker = null;
   }
+  unfocusedSinceMs = null;
+  hideFocusPopup();
   const canvas = document.getElementById("eye-overlay");
   if (canvas) {
     const ctx = canvas.getContext("2d");

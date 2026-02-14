@@ -1,0 +1,169 @@
+import React, { useState, useEffect, useCallback } from 'react';
+
+const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+
+function Report() {
+  const [meetingId, setMeetingId] = useState('default');
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [popupSummary, setPopupSummary] = useState(null);
+  const [liveConnected, setLiveConnected] = useState(false);
+
+  const fetchReport = useCallback(async () => {
+    if (!meetingId.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/report?meetingId=${encodeURIComponent(meetingId.trim())}`);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || res.statusText);
+      }
+      const data = await res.json();
+      setReport(data);
+    } catch (e) {
+      setError(e.message);
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [meetingId]);
+
+  useEffect(() => {
+    fetchReport();
+  }, [fetchReport]);
+
+  useEffect(() => {
+    if (!meetingId.trim()) return;
+    const ws = new WebSocket(`${WS_URL}?meetingId=${encodeURIComponent(meetingId.trim())}`);
+    ws.onopen = () => setLiveConnected(true);
+    ws.onclose = () => setLiveConnected(false);
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'SUMMARY_UPDATE' && msg.payload?.summary) {
+          setPopupSummary({ ...msg.payload, at: msg.payload.at || new Date().toISOString() });
+          setReport((prev) => (prev ? { ...prev, lastSummary: msg.payload.summary } : { meetingId, lastSummary: msg.payload.summary, lastDecision: null, eventCount: 0 }));
+        }
+        if (msg.type === 'COORDINATOR_UPDATE' && msg.payload?.summary) {
+          setReport((prev) => (prev ? { ...prev, lastSummary: msg.payload.summary, lastDecision: msg.payload.decision } : null));
+        }
+      } catch (_) {}
+    };
+    return () => ws.close();
+  }, [meetingId]);
+
+  const dismissPopup = () => setPopupSummary(null);
+
+  return (
+    <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', fontFamily: 'sans-serif' }}>
+      <h1>Teacher Report</h1>
+      <p style={{ color: '#666', marginBottom: '24px' }}>
+        View engagement summary for a meeting (during or after). Live updates every 5 minutes when connected via WebSocket.
+      </p>
+
+      <div style={{ marginBottom: '24px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <label>
+          Meeting ID:
+          <input
+            type="text"
+            value={meetingId}
+            onChange={(e) => setMeetingId(e.target.value)}
+            placeholder="default"
+            style={{ marginLeft: '8px', padding: '8px 12px', width: '200px', borderRadius: '4px', border: '1px solid #ccc' }}
+          />
+        </label>
+        <button
+          onClick={fetchReport}
+          disabled={loading}
+          style={{ padding: '8px 16px', background: '#007bff', color: 'white', border: 'none', borderRadius: '5px', cursor: loading ? 'not-allowed' : 'pointer' }}
+        >
+          {loading ? 'Loading…' : 'Refresh report'}
+        </button>
+        {liveConnected && <span style={{ color: '#28a745', fontSize: '14px' }}>● Live</span>}
+      </div>
+
+      {error && (
+        <div style={{ padding: '12px', background: '#f8d7da', color: '#721c24', borderRadius: '5px', marginBottom: '20px' }}>
+          {error}
+        </div>
+      )}
+
+      {report && report.lastSummary && (
+        <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '8px', padding: '20px', marginBottom: '20px' }}>
+          <h2 style={{ marginTop: 0 }}>Latest engagement summary</h2>
+          <p><strong>Class engagement:</strong> {report.lastSummary.class_engagement} (1=low, 2=medium, 3=high)</p>
+          <p><strong>Summary:</strong> {report.lastSummary.summary}</p>
+          {report.lastSummary.cold_students?.length > 0 && (
+            <p><strong>Cold students (need attention):</strong> {report.lastSummary.cold_students.join(', ') || '—'}</p>
+          )}
+          {report.lastSummary.per_user?.length > 0 && (
+            <div>
+              <strong>Per user:</strong>
+              <ul style={{ margin: '8px 0 0', paddingLeft: '20px' }}>
+                {report.lastSummary.per_user.map((u, i) => (
+                  <li key={i}>{u.userId || u.displayName}: engagement {u.engagement} — {u.reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {report.lastDecision && (
+            <p style={{ marginTop: '12px', marginBottom: 0 }}><strong>Last decision:</strong> {report.lastDecision.action} — {report.lastDecision.reason}</p>
+          )}
+          <p style={{ fontSize: '12px', color: '#666', marginTop: '12px' }}>Event count: {report.eventCount}</p>
+        </div>
+      )}
+
+      {report && !report.lastSummary && report.eventCount !== undefined && (
+        <p style={{ color: '#666' }}>No summary yet. Send events (e.g. gaze with meetingId, or POST /api/events) and run an agent tick (POST /api/tick) or wait for the 5‑minute periodic summary.</p>
+      )}
+
+      {/* Popup: every X minutes summary update */}
+      {popupSummary && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={dismissPopup}
+        >
+          <div
+            style={{
+              background: 'white',
+              padding: '24px',
+              borderRadius: '12px',
+              maxWidth: '480px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ marginTop: 0 }}>Periodic engagement update</h3>
+            <p style={{ fontSize: '12px', color: '#666' }}>{new Date(popupSummary.at).toLocaleString()}</p>
+            <p>{popupSummary.summary?.summary}</p>
+            <p><strong>Class engagement:</strong> {popupSummary.summary?.class_engagement}</p>
+            {popupSummary.summary?.cold_students?.length > 0 && (
+              <p><strong>Cold students:</strong> {popupSummary.summary.cold_students.join(', ')}</p>
+            )}
+            <button
+              onClick={dismissPopup}
+              style={{ marginTop: '16px', padding: '8px 16px', background: '#333', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default Report;

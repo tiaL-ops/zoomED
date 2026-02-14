@@ -68,11 +68,12 @@ function joinMeeting() {
 }
 
 function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role) {
-  // Hide the join form
   document.getElementById("join-form").style.display = "none";
-  
-  // Show Zoom meeting container
+  document.getElementById("meeting-layout").classList.add("in-meeting");
   document.getElementById("zmmtg-root").style.display = "block";
+  if (window.EngagementPanel && window.EngagementPanel.onJoin) {
+    window.EngagementPanel.onJoin(meetingNumber, userName, role);
+  }
 
   ZoomMtg.init({
     leaveUrl: leaveUrl,
@@ -90,13 +91,17 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
         userEmail: "",
         success: (success) => {
           console.log("Join success:", success);
+          if (window.EngagementPanel && window.EngagementPanel.onMeetingJoined) {
+            window.EngagementPanel.onMeetingJoined(role);
+          }
         },
         error: (error) => {
           console.error("Join error:", error);
           showError("Failed to join meeting: " + error.reason);
-          // Show form again
           document.getElementById("join-form").style.display = "block";
+          document.getElementById("meeting-layout").classList.remove("in-meeting");
           document.getElementById("zmmtg-root").style.display = "none";
+          if (window.EngagementPanel && window.EngagementPanel.hide) window.EngagementPanel.hide();
           const joinButton = document.getElementById("join-button");
           joinButton.disabled = false;
           joinButton.textContent = "Join Meeting";
@@ -106,9 +111,10 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
     error: (error) => {
       console.error("Init error:", error);
       showError("Failed to initialize meeting SDK");
-      // Show form again
       document.getElementById("join-form").style.display = "block";
+      document.getElementById("meeting-layout").classList.remove("in-meeting");
       document.getElementById("zmmtg-root").style.display = "none";
+      if (window.EngagementPanel && window.EngagementPanel.hide) window.EngagementPanel.hide();
       const joinButton = document.getElementById("join-button");
       joinButton.disabled = false;
       joinButton.textContent = "Join Meeting";

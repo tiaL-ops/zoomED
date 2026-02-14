@@ -1,18 +1,35 @@
-init zoom apps sdk, listen for valuable events and forward them to backend as JSON
-also relay backend responses forward and propogate them
+# Zoom Meeting SDK + Engagement Panel
 
-## PROBLEM: You neeed to deploy it so  not sure wher to host it yet. need help with that can;t figur e it out 
-TUto herE: 
-https://github.com/zoom/meetingsdk-javascript-sample
+Meeting SDK flow (no ngrok). Open in browser, join meeting, see engagement panel alongside.
 
+## Quick start
 
-when zoom part done, need to connect websocket
-useEffect(() => {
-  const ws = new WebSocket(`wss://your-server.ngrok.io?meetingId=${meetingId}`);
-  ws.onmessage = (event) => {
-    const msg = JSON.parse(event.data);
-    if (msg.type === "POLL_SUGGESTION") setPollSuggestion(msg.payload);
-    if (msg.type === "LEADERBOARD_UPDATE") setLeaderboard(msg.payload.leaderboard);
-  };
-  return () => ws.close();
-}, [meetingId]);
+### 1. Auth backend (port 4000)
+```bash
+cd zoomapp/meetingsdk-auth-endpoint-sample
+cp .env.example .env
+# Edit .env with ZOOM_MEETING_SDK_KEY and ZOOM_MEETING_SDK_SECRET
+npm install && npm start
+```
+
+### 2. TreeHacks backend (port 3000)
+```bash
+cd server
+npm install && node index.js
+```
+
+### 3. Serve zoomapp client (port 8080)
+```bash
+cd zoomapp
+npx serve -p 8080
+```
+
+### 4. Open in browser
+Go to **http://localhost:8080** → enter meeting ID, passcode, name → Join.
+
+After joining, the **engagement sidebar** shows:
+- Run agents → `POST /api/meetings/:meetingId/run-agents`
+- Generate poll → `POST /api/meetings/:meetingId/generate-poll`
+- I'm good / I'm lost → `POST /api/meetings/:meetingId/events` (SELF_REPORT)
+
+Meeting ID from the join form is used as `meetingId` for backend calls.

@@ -26,6 +26,16 @@ function Home() {
         }}>
           Generate Poll
         </a>
+        <a href="/report" style={{ 
+          padding: '12px 24px', 
+          background: '#6f42c1', 
+          color: 'white', 
+          textDecoration: 'none',
+          borderRadius: '5px',
+          margin: '0 10px'
+        }}>
+          Teacher Report
+        </a>
         <a href="/hi" style={{ 
           padding: '12px 24px', 
           background: '#28a745', 

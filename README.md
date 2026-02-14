@@ -18,8 +18,8 @@ in the meantime:
 **front**
 
 ```
-cd client  
-npm run dev
+c
+''''''''''''''''
 ```
 
 **back**
@@ -30,7 +30,40 @@ node index.js
 ```
 ## Zoom Meeting SDK (no ngrok)
 
-Meeting SDK flow – open in browser, join meeting, see engagement panel.
+we need zoom repo
+### 4. Set Up Authentication Backend
+
+The Meeting SDK requires a signature from an authentication backend:
+
+```bash
+git clone https://github.com/zoom/meetingsdk-auth-endpoint-sample --depth 1
+cd meetingsdk-auth-endpoint-sample
+cp .env.example .env
+```
+
+Edit `.env` with your credentials:
+```env
+CLIENT_SECRET=your_client_secret_here
+# or
+ZOOM_MEETING_SDK_SECRET=your_sdk_secret_here
+```
+
+Start the auth backend:
+```bash
+npm install && npm run start
+```
+
+### 5. Run the Sample App
+```bash
+npm start
+```
+
+
+```
+cd zoomapp/meetingsdk-auth-endpoint-sample
+npm install
+npm start
+```
 
 1. **Auth backend** (port 4000):
    ```
@@ -55,19 +88,93 @@ Meeting SDK flow – open in browser, join meeting, see engagement panel.
 
 current pages
 
-* `/videoapp` → see engagement
-* `/poll` → based on fake data
+* `/videoapp` → see engagement (gaze); optional: send `meetingId`/`userId` to feed agents
+* `/poll` → generate quizzes (from static summary.txt or live meeting if `?meetingId=` has data)
+* `/report` → teacher report: latest engagement summary (during or after meeting); popup every 5 min when connected via WebSocket
+
+see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit together.
 
 ---
 
-# Zoom-native side panel (Vite + React, @zoom/appssdk)
+# new additions
 
-* **Dev:** `cd zoom-panel && npm install && npm run dev` → panel at **http://localhost:5174** (proxies `/api` to backend).
-* **Built panel (served by backend):** `cd zoom-panel && npm run build` then start server → **http://localhost:3000/panel/** serves the built app.
-* **Inside Zoom:** use ngrok to expose 5174 (dev) or your deployed URL; set that as the Zoom App side panel URL. See `zoom-panel/README.md`.
-* **Endpoints:** `POST /api/meetings/:meetingId/events`, `POST /api/zoom/webhook`, `POST /api/meetings/:meetingId/run-agents`, `POST /api/meetings/:meetingId/generate-poll`
+* **single server (index.js)** – meeting state, WebSocket, and all agents now run in one process: `/api/events`, `/api/tick`, `/api/report`, and a 5‑minute periodic summary that pushes to connected clients
+* **gaze → agents** – optional `meetingId` / `userId` in `/api/analyze-gaze` stores attention as events so the engagement summarizer can use them
+* **teacher report** – new `/report` page: fetch latest engagement summary (during or after meeting). WebSocket gives live updates and a **popup every 5 minutes** with latest summary
+* **leaderboard** – `server/leaderboard.js` keeps per-meeting quiz scores when events include `QUIZ_ANSWER`.
+* **docs** – `ARCHITECTURE.md` describes current vs target flow and where Zoom RTMS would plug in
 
 ---
 
-to use Claude:
-go to [https://platform.claude.com/settings/keys](https://platform.claude.com/settings/keys) and create your API key
+# how to test the integration
+
+**Prereqs:** Node 18+, `CLAUDE_API_KEY` in `server/.env`.
+
+## 1. start backend and frontend
+
+```bash
+# Terminal 1 – server (port 3000)
+cd server
+npm install
+node index.js
+```
+
+```bash
+# Terminal 2 – client (port 5173)
+cd client
+npm install
+npm run dev
+```
+
+then open **http://localhost:5173**.
+
+## 2. test the poll page (static data)
+
+* go to poll, click generate student quizzes
+* will be able to see quizzes generated from `server/summary.txt` for maya, carlos, liam. 
+* no meeting state needed; this uses the existing demo data.
+
+## 3. test the report page (no data yet)
+
+* go to **report**, leave meeting ID as default and click refresh report
+* should see error like “no meeting or no data yet” (expected until events exist).
+
+## 4. TESTING FUNCTION: send events and run agents , will be live zoom data later
+
+* **first option – POST events by hand (e.g. curl):**
+
+```bash
+curl -X POST http://localhost:3000/api/events \
+  -H "Content-Type: application/json" \
+  -d '{"meetingId":"default","type":"CHAT_MESSAGE","userId":"u1","displayName":"Alex"}'
+
+curl -X POST http://localhost:3000/api/events \
+  -H "Content-Type: application/json" \
+  -d '{"meetingId":"default","type":"ATTENTION_SCORE","userId":"u2","displayName":"Sam","cv_attention_score":0.5}'
+```
+
+* **option 2 - trigger one agent run**
+
+```bash
+curl -X POST http://localhost:3000/api/tick \
+  -H "Content-Type: application/json" \
+  -d '{"meetingId":"default"}'
+```
+
+* go back to report, click refresh. should see a summary (class engagement, per-user, cold students) and last decision
+
+## 5. test the 5‑minute popup
+
+* stay on report with meeting ID `default`.  
+* ensure you’ve sent at least one event and run `/api/tick` (or wait for the server’s 5‑minute timer)
+* the page connects via WebSocket (you’ll see **● Live** when connected)
+* every 5 minutes the server runs the summarizer and pushes `SUMMARY_UPDATE`; a **popup** should appear with the latest summary. (to test without waiting, temporarily change `SUMMARY_INTERVAL_MS` in `server/index.js` to e.g. `60 * 1000` for 1 minute.)
+
+## 6. test gaze feeding into meeting state (optional)
+
+* the video app currently does not send `meetingId`/`userId`. to feed gaze into agents, we need to add those fields to the `/api/analyze-gaze` request body in `client/src/components/VideoApp.jsx`.  
+*after that, start the camera, send gaze a few times, then run **report** or **POST /api/tick** for the same `meetingId` to see attention in the summary
+
+---
+
+**Claude API key:** [Create a key here](https://platform.claude.com/settings/keys) and set `CLAUDE_API_KEY` in `server/.env`.

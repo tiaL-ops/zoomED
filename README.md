@@ -21,6 +21,5 @@ cd server
 node index.js
 
 ## current page:
-/videoapp 
-
-/hi
+/videoapp --> see the engagement 
+/poll --> baded on fake data 

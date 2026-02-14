@@ -16,6 +16,16 @@ function Home() {
         }}>
           Try Gaze Detection
         </a>
+        <a href="/poll" style={{ 
+          padding: '12px 24px', 
+          background: '#dc3545', 
+          color: 'white', 
+          textDecoration: 'none',
+          borderRadius: '5px',
+          margin: '0 10px'
+        }}>
+          Generate Poll
+        </a>
         <a href="/hi" style={{ 
           padding: '12px 24px', 
           background: '#28a745', 

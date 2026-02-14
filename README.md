@@ -18,8 +18,8 @@ in the meantime:
 **front**
 
 ```
-cd client  
-npm run dev
+c
+''''''''''''''''
 ```
 
 **back**
@@ -31,6 +31,35 @@ node index.js
 **zoomap**
 is its own cuz i was not sure it will work. very messy
 to run zoom app :
+
+we need zoom repo
+### 4. Set Up Authentication Backend
+
+The Meeting SDK requires a signature from an authentication backend:
+
+```bash
+git clone https://github.com/zoom/meetingsdk-auth-endpoint-sample --depth 1
+cd meetingsdk-auth-endpoint-sample
+cp .env.example .env
+```
+
+Edit `.env` with your credentials:
+```env
+CLIENT_SECRET=your_client_secret_here
+# or
+ZOOM_MEETING_SDK_SECRET=your_sdk_secret_here
+```
+
+Start the auth backend:
+```bash
+npm install && npm run start
+```
+
+### 5. Run the Sample App
+```bash
+npm start
+```
+
 
 ```
 cd zoomapp/meetingsdk-auth-endpoint-sample

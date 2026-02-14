@@ -4,7 +4,7 @@ import cors from "cors";
 import { WebSocketServer } from "ws";
 import Anthropic from "@anthropic-ai/sdk";
 
-import { engagementSummarizerAgent, meetingCoordinatorAgent, quizPollAgent } from "./agents";
+import { engagementSummarizerAgent, meetingCoordinatorAgent, quizPollAgent, notesExtractorAgent, agentNotesChatAgent } from "./agents";
 import { updateLeaderboard } from "./leaderboard";
 
 async function runAgentsForMeeting(meetingId: string) {
@@ -53,6 +53,9 @@ function broadcast(meetingId: string, msg: any) {
 // In-memory meeting state (hackathon-safe)
 const meetingState: Record<string, any> = {};
 
+// In-memory notes storage
+const notesStorage: Record<string, any> = {};
+
 // HTTP endpoint to receive events from Zoom app
 app.post("/api/events", async (req, res) => {
   const event = req.body;
@@ -60,8 +63,17 @@ app.post("/api/events", async (req, res) => {
   if (!meetingId) return res.status(400).send("missing meetingId");
 
   // Store event in meetingState
-  meetingState[meetingId] = meetingState[meetingId] || { events: [] };
+  meetingState[meetingId] = meetingState[meetingId] || { events: [], transcriptSnippets: [] };
   meetingState[meetingId].events.push({ ...event, ts: Date.now() });
+
+  // If it's a transcript update, store it
+  if (event.type === "TRANSCRIPT_UPDATE") {
+    meetingState[meetingId].transcriptSnippets.push({
+      text: event.text,
+      speaker: event.speaker,
+      timestamp: event.timestamp || new Date().toISOString(),
+    });
+  }
 
   // If it's a quiz answer, update leaderboard immediately
   if (event.type === "QUIZ_ANSWER") {
@@ -72,11 +84,97 @@ app.post("/api/events", async (req, res) => {
   res.json({ ok: true });
 });
 
-// Simple HTTP endpoint to trigger an "agent tick" from instructor UI
-app.post("/api/tick", async (req, res) => {
-  const { meetingId } = req.body;
-  const result = await runAgentsForMeeting(meetingId);
-  res.json(result);
+// Endpoint to generate notes from meeting transcript
+app.post("/api/generate-notes", async (req, res) => {
+  const { meetingId, userConversation } = req.body;
+  if (!meetingId) return res.status(400).send("missing meetingId");
+
+  try {
+    const meeting = meetingState[meetingId];
+    if (!meeting) return res.status(404).send("meeting not found");
+
+    // Build full transcript from snippets
+    const transcript = (meeting.transcriptSnippets || [])
+      .map((s: any) => `[${s.speaker}]: ${s.text}`)
+      .join("\n");
+
+    if (!transcript.trim()) {
+      return res.status(400).send("no transcript available");
+    }
+
+    // Generate notes using agent
+    const notes = await notesExtractorAgent(transcript, userConversation || "");
+    
+    // Store notes
+    notesStorage[meetingId] = {
+      ...notes,
+      generatedAt: new Date().toISOString(),
+      transcriptLength: transcript.length,
+    };
+
+    // Broadcast notes to clients
+    broadcast(meetingId, {
+      type: "NOTES_GENERATED",
+      payload: notesStorage[meetingId],
+    });
+
+    res.json({
+      ok: true,
+      notes: notesStorage[meetingId],
+    });
+  } catch (error) {
+    console.error("Error generating notes:", error);
+    res.status(500).json({ error: String(error) });
+  }
+});
+
+// Endpoint to retrieve generated notes
+app.get("/api/notes/:meetingId", (req, res) => {
+  const { meetingId } = req.params;
+  const notes = notesStorage[meetingId];
+  
+  if (!notes) {
+    return res.status(404).json({ error: "notes not found" });
+  }
+
+  res.json({ ok: true, notes });
+});
+
+// Endpoint to refine notes through agent conversation
+app.post("/api/notes/:meetingId/chat", async (req, res) => {
+  const { meetingId } = req.params;
+  const { query } = req.body;
+
+  if (!query) return res.status(400).send("missing query");
+
+  try {
+    const currentNotes = notesStorage[meetingId];
+    if (!currentNotes) {
+      return res.status(404).send("notes not found, generate them first");
+    }
+
+    const updatedNotes = await agentNotesChatAgent(query, currentNotes);
+    
+    // Merge updates
+    notesStorage[meetingId] = {
+      ...currentNotes,
+      ...updatedNotes,
+      updatedAt: new Date().toISOString(),
+    };
+
+    broadcast(meetingId, {
+      type: "NOTES_UPDATED",
+      payload: notesStorage[meetingId],
+    });
+
+    res.json({
+      ok: true,
+      notes: notesStorage[meetingId],
+    });
+  } catch (error) {
+    console.error("Error updating notes:", error);
+    res.status(500).json({ error: String(error) });
+  }
 });
 
 // WebSocket upgrade for pushing updates to Zoom clients

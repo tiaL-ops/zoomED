@@ -1,8 +1,7 @@
 // no llm, just backend calc
-type ScoreEntry = { userId: string; displayName: string; score: number };
-const leaderboardByMeeting: Record<string, ScoreEntry[]> = {};
+const leaderboardByMeeting = {};
 
-export function updateLeaderboard(meetingId: string, answerEvent: any) {
+export function updateLeaderboard(meetingId, answerEvent) {
   const list = (leaderboardByMeeting[meetingId] ||= []);
   let entry = list.find((e) => e.userId === answerEvent.userId);
   if (!entry) {

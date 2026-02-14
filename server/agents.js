@@ -1,24 +1,14 @@
 // server/agents.js
+import dotenv from "dotenv";
+dotenv.config();
+
 import Anthropic from "@anthropic-ai/sdk";
+const anthropic = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
 
-let anthropic = null;
-
-function getAnthropicClient() {
-  if (!anthropic) {
-    if (!process.env.CLAUDE_API_KEY) {
-      throw new Error("CLAUDE_API_KEY environment variable is not set");
-    }
-    anthropic = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
-    console.log("Claude API initialized successfully");
-  }
-  return anthropic;
-}
-
-async function callClaudeJSON(system, user) {
-  const client = getAnthropicClient();
-  const resp = await client.messages.create({
+async function callClaudeJSON(system, user, maxTokens = 800) {
+  const resp = await anthropic.messages.create({
     model: "claude-3-haiku-20240307",
-    max_tokens: 1024,
+    max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: user }],
   });
@@ -26,7 +16,12 @@ async function callClaudeJSON(system, user) {
   if (!textBlock || textBlock.type !== "text") {
     throw new Error("No text content in response");
   }
-  return JSON.parse(textBlock.text);
+  try {
+    return JSON.parse(textBlock.text);
+  } catch (e) {
+    console.error("Failed to parse JSON response:", textBlock.text);
+    throw e;
+  }
 }
 
 // agent #1: engagement summarizer
@@ -146,6 +141,78 @@ No explanations.
     topic,
     engagement_level: engagementLevel,
     transcriptSnippet,
+  });
+
+  return await callClaudeJSON(system, user);
+}
+
+// agent 4: notes extractor - converts transcripts into associated notes with key points
+export async function notesExtractorAgent(transcript, userConversation = "") {
+  const system = `
+You are an intelligent notes extraction system for educational meetings.
+Your task: Convert a meeting transcript and user conversation into structured notes with associated knowledge nodes.
+
+Create a knowledge graph where:
+1. "key_points" are main concepts/topics discussed (nodes)
+2. "associations" show how different points connect to each other
+3. "details" are supporting information for each key point
+
+Return STRICT JSON format:
+{
+  "title": "Meeting Summary",
+  "key_points": [
+    {
+      "id": "kp1",
+      "title": "Concept Name",
+      "summary": "Brief 1-2 sentence summary",
+      "details": ["detail 1", "detail 2"],
+      "importance": "high" | "medium" | "low",
+      "timestamp": "HH:MM:SS or null"
+    }
+  ],
+  "associations": [
+    {
+      "from_id": "kp1",
+      "to_id": "kp2",
+      "relationship_type": "prerequisite" | "related" | "contradicts" | "example_of" | "expands_on",
+      "description": "How they connect"
+    }
+  ],
+  "summary": "Overall meeting summary",
+  "tags": ["topic1", "topic2"]
+}
+
+Guidelines:
+- Limit to 5-8 key points per meeting
+- Identify diverse relationships between concepts
+- Mark important concepts as "high" importance
+- Focus on educational value and knowledge retention
+- Extract timestamp if available from transcript
+`;
+
+  const user = JSON.stringify({
+    transcript,
+    user_conversation: userConversation,
+  });
+
+  return await callClaudeJSON(system, user, 2048);
+}
+
+// agent 5: agent-to-notes conversation handler
+export async function agentNotesChatAgent(userQuery, currentNotes) {
+  const system = `
+You are a note-taking assistant that helps users refine and expand meeting notes.
+Given the current notes structure and a user query, provide updated notes or suggestions.
+Keep the same JSON structure but update relevant fields.
+If user asks to add a concept, create a new key_point.
+If user asks to connect ideas, add new associations.
+
+Return the updated notes JSON or a helpful response if clarifying is needed.
+`;
+
+  const user = JSON.stringify({
+    query: userQuery,
+    current_notes: currentNotes,
   });
 
   return await callClaudeJSON(system, user);

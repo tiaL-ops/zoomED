@@ -28,9 +28,7 @@ c
 cd server  
 node index.js
 ```
-**zoomap**
-is its own cuz i was not sure it will work. very messy
-to run zoom app :
+## Zoom Meeting SDK (no ngrok)
 
 we need zoom repo
 ### 4. Set Up Authentication Backend
@@ -67,14 +65,24 @@ npm install
 npm start
 ```
 
-new terminal:
+1. **Auth backend** (port 4000):
+   ```
+   cd zoomapp/meetingsdk-auth-endpoint-sample
+   cp .env.example .env   # add ZOOM_MEETING_SDK_KEY and ZOOM_MEETING_SDK_SECRET
+   npm install && npm start
+   ```
 
-```
-cd zoomapp
-npx serve -p 8080
-```
+2. **TreeHacks backend** (port 3000):
+   ```
+   cd server && node index.js
+   ```
 
-open http://localhost:8080
+3. **Serve zoomapp** (port 8080):
+   ```
+   cd zoomapp && npx serve -p 8080
+   ```
+
+4. **Open** http://localhost:8080 → Join meeting → Engagement sidebar appears.
 
 ---
 

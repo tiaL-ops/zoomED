@@ -14,6 +14,8 @@
         
             min-height: 100vh;
         }
+        body.student-panel-open { padding-right: 296px; }
+        body.student-panel-open.student-panel-collapsed { padding-right: 60px; }
         .container {
             max-width: 500px;
             margin: 50px auto;
@@ -72,6 +74,83 @@
         #zmmtg-root {
             display: none;
         }
+        .meeting-layout {
+            display: none;
+            min-height: 100vh;
+        }
+        .meeting-layout.in-meeting {
+            display: block;
+            min-height: 100vh;
+        }
+        .meeting-main {
+            min-height: 100vh;
+            margin-right: 280px;
+        }
+        body.student-panel-open.student-panel-collapsed .meeting-main { margin-right: 44px; }
+        .engagement-sidebar {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 70px; /* leave Zoom controls (Leave, etc.) visible */
+            width: 280px;
+            max-width: 90vw;
+            background: #1a1d21;
+            color: #e4e6eb;
+            padding: 16px;
+            font-size: 14px;
+            overflow-y: auto;
+            z-index: 9998;
+            box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+            transition: width 0.2s, right 0.2s;
+        }
+        .engagement-sidebar.collapsed {
+            width: 44px;
+            padding: 12px 8px;
+            overflow: hidden;
+        }
+        .engagement-sidebar.collapsed .engagement-content { display: none; }
+        .engagement-sidebar .collapse-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: none;
+            border-radius: 4px;
+            background: #25282c;
+            color: #e4e6eb;
+            font-size: 14px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .engagement-sidebar.collapsed .collapse-btn { right: 8px; }
+        .engagement-sidebar h2 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+        }
+        .engagement-sidebar .section { margin-bottom: 16px; }
+        .engagement-sidebar .meter {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .engagement-sidebar .meter.low { color: #e74c3c; }
+        .engagement-sidebar .meter.mid { color: #e6b800; }
+        .engagement-sidebar .meter.high { color: #31a24c; }
+        .engagement-sidebar .btn {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .engagement-sidebar .btn-primary { background: #0b65c2; color: #fff; }
+        .engagement-sidebar .btn-secondary { background: #25282c; color: #e4e6eb; }
+        .engagement-sidebar .btn-small { padding: 6px 10px; font-size: 12px; }
         #eye-overlay {
             position: fixed;
             top: 0;
@@ -137,6 +216,39 @@
         <div id="error-message" class="error"></div>
     </div>
 
+    <div class="meeting-layout" id="meeting-layout">
+        <div class="meeting-main">
+            <div id="zmmtg-root"></div>
+        </div>
+    </div>
+
+    <!-- Student panel: opens on the right when students join. Collapsible; leaves Zoom controls visible. -->
+    <aside class="engagement-sidebar" id="engagement-sidebar" style="display:none;">
+        <button class="collapse-btn" id="engagement-collapse-btn" title="Collapse panel">‹</button>
+        <div class="engagement-content">
+        <h2>Engagement</h2>
+        <p style="font-size:11px;color:#8a8d91;margin-bottom:12px;">Student panel — only visible to attendees.</p>
+        <div class="section">
+            <div id="engagement-meter" class="meter" aria-label="Class engagement">—</div>
+            <p id="engagement-summary" style="margin:0;font-size:12px;color:#8a8d91;">Click Run agents.</p>
+        </div>
+        <div class="section">
+            <button class="btn btn-secondary" id="run-agents-btn">Run agents</button>
+            <button class="btn btn-primary" id="generate-poll-btn">Generate poll</button>
+        </div>
+        <div class="section">
+            <h3 style="margin:0 0 8px 0;font-size:13px;">Quick check-in</h3>
+            <button class="btn btn-small btn-secondary" id="im-good-btn">I'm good</button>
+            <button class="btn btn-small btn-secondary" id="im-lost-btn">I'm lost</button>
+        </div>
+        <div class="section" id="poll-result" style="display:none;">
+            <h3 style="margin:0 0 8px 0;font-size:13px;">Quick check poll</h3>
+            <div id="poll-content"></div>
+        </div>
+        <div id="engagement-error" class="error" style="display:none;"></div>
+        </div>
+    </aside>
+
     <script src="https://source.zoom.us/3.8.10/lib/vendor/react.min.js"></script>
     <script src="https://source.zoom.us/3.8.10/lib/vendor/react-dom.min.js"></script>
     <script src="https://source.zoom.us/3.8.10/lib/vendor/redux.min.js"></script>
@@ -149,9 +261,7 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
     
     <script src="app.js"></script>
-</body>
-</html>
-
+    <script src="engagement-panel.js"></script>
     <!-- For Component View -->
     <!-- <script src="https://source.zoom.us/4.0.0/zoom-meeting-embedded-4.0.0.min.js"></script>
     <script type="text/javascript" src="component-view.js"></script> -->

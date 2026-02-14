@@ -29,49 +29,9 @@ async function callClaudeJSON(system, user) {
   return JSON.parse(textBlock.text);
 }
 
-// agent #1: engagement summarizer
-export async function engagementSummarizerAgent(meeting) {
-  const now = Date.now();
-  const windowMs = 5 * 60 * 1000;
-  const events = (meeting.events || []).filter((e) => now - e.ts <= windowMs);
-
-  const usersMap = new Map();
-  for (const e of events) {
-    const u = usersMap.get(e.userId) || {
-      userId: e.userId,
-      displayName: e.displayName,
-      signals: {
-        polls_answered: 0,
-        polls_missed: 0,
-        chat_messages: 0,
-        game_interactions: 0,
-        avg_response_latency_ms: 0,
-        cv_attention_score: e.cv_attention_score ?? null,
-        video_on: e.video_on ?? true,
-        _latencies: [],
-      },
-    };
-    if (e.type === "QUIZ_ANSWER") {
-      if (e.isCorrect || e.isCorrect === false) {
-        u.signals.polls_answered += 1;
-        u.signals._latencies.push(e.responseTimeMs);
-      }
-    }
-    if (e.type === "CHAT_MESSAGE") {
-      u.signals.chat_messages += 1;
-    }
-    // Add other event types as needed
-    usersMap.set(e.userId, u);
-  }
-
-  const users = Array.from(usersMap.values()).map((u) => {
-    const arr = u.signals._latencies;
-    u.signals.avg_response_latency_ms = arr.length
-      ? arr.reduce((a, b) => a + b, 0) / arr.length
-      : 0;
-    delete u.signals._latencies;
-    return u;
-  });
+// agent #1: engagement summarizer (accepts snapshot with pre-built users)
+export async function engagementSummarizerAgent(snapshot) {
+  const users = snapshot.users || [];
 
   const system = `
 You are an engagement summarizer for a live Zoom class.
@@ -90,11 +50,11 @@ Return STRICT JSON:
   return await callClaudeJSON(system, user);
 }
 
-// agent #2: meeting coordinator agent
-export async function meetingCoordinatorAgent(summary, meeting) {
-  const recentPolls = (meeting.events || [])
-    .filter((e) => e.type === "QUIZ_ANSWER")
-    .slice(-20); // simplistic
+// agent #2: meeting coordinator agent (accepts snapshot with recentPolls, recentTranscriptSnippets, recentQuestions)
+export async function meetingCoordinatorAgent(summary, snapshot) {
+  const recentPolls = (snapshot.recentPolls || []).slice(-20);
+  const recentTranscriptSnippets = snapshot.recentTranscriptSnippets || [];
+  const recentQuestions = snapshot.recentQuestions || [];
 
   const system = `
 You are the meeting coordinator for a Zoom class.
@@ -118,7 +78,8 @@ Give GENERATE_POLL or PROMPT_INSTRUCTOR when class_engagement is 1 or many cold_
   const user = JSON.stringify({
     summary,
     recentPolls,
-    recentTranscriptSnippets: meeting.recentTranscriptSnippets || [],
+    recentTranscriptSnippets,
+    recentQuestions,
   });
 
   return await callClaudeJSON(system, user);

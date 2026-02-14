@@ -56,6 +56,8 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, '../videoapp')));
+// Zoom App side panel (Vite build; run `cd zoom-panel && npm run build` to populate dist)
+app.use('/panel', express.static(path.join(__dirname, '../zoom-panel/dist')));
 
 // ----- Gaze: immediate response + optional store as engagement event -----
 app.post('/api/analyze-gaze', (req, res) => {

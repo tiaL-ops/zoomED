@@ -1,53 +1,35 @@
 <!DOCTYPE html>
-<html>
-<head>
-    <title>Webcam Toggle</title>
-    <style>
-        body { font-family: sans-serif; text-align: center; background: #1a1a1a; color: white; padding: 20px; }
-        video { width: 100%; max-width: 600px; background: #000; border-radius: 10px; transform: scaleX(-1); } /* Mirror mode */
-        .buttons { margin-top: 15px; }
-        button { padding: 12px 24px; font-size: 1rem; cursor: pointer; border: none; border-radius: 5px; margin: 5px; }
-        .start { background: #28a745; color: white; }
-        .stop { background: #dc3545; color: white; }
-    </style>
-</head>
-<body>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <title>Zoom Meeting SDK Sample JavaScript</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Zoom Meeting SDK Sample JavaScript</h1>
 
-    <h2>Webcam Control</h2>
-    <video id="webcam" autoplay playsinline></video>
+      <!-- For Component View -->
+      <div id="meetingSDKElement">
+        <!-- Zoom Meeting SDK Rendered Here -->
+      </div>
 
-    <div class="buttons">
-        <button class="start" onclick="startCamera()">Start Camera</button>
-        <button class="stop" onclick="stopCamera()">Close Camera</button>
-    </div>
+      <button onClick="getSignature()">Join Meeting</button>
+    </main>
 
-    <script>
-        let stream = null;
+    <!-- Dependencies for client view and component view -->
+    <script src="https://source.zoom.us/4.0.0/lib/vendor/react.min.js"></script>
+    <script src="https://source.zoom.us/4.0.0/lib/vendor/react-dom.min.js"></script>
+    <script src="https://source.zoom.us/4.0.0/lib/vendor/redux.min.js"></script>
+    <script src="https://source.zoom.us/4.0.0/lib/vendor/redux-thunk.min.js"></script>
+    <script src="https://source.zoom.us/4.0.0/lib/vendor/lodash.min.js"></script>
 
-        async function startCamera() {
-            try {
-                // Request camera access
-                stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                const videoElement = document.getElementById('webcam');
-                videoElement.srcObject = stream;
-            } catch (err) {
-                console.error("Error accessing webcam: ", err);
-                alert("Could not access camera. Check permissions!");
-            }
-        }
+    <!-- For Client View -->
+    <script src="https://source.zoom.us/zoom-meeting-4.0.0.min.js"></script>
+    <script type="text/javascript" src="client-view.js"></script>
 
-        function stopCamera() {
-            if (stream) {
-                // This stops the actual hardware (the light turns off)
-                stream.getTracks().forEach(track => track.stop());
-                
-                // Clear the video element
-                const videoElement = document.getElementById('webcam');
-                videoElement.srcObject = null;
-                stream = null;
-            }
-        }
-    </script>
-
-</body>
+    <!-- For Component View -->
+    <!-- <script src="https://source.zoom.us/4.0.0/zoom-meeting-embedded-4.0.0.min.js"></script>
+    <script type="text/javascript" src="component-view.js"></script> -->
+  </body>
 </html>

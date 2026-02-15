@@ -112,7 +112,7 @@ async function runAgentsForMeeting(meetingId) {
   const meeting = meetingState[meetingId];
   if (!meeting) return { error: 'no meeting' };
   const snapshot = buildSnapshot(meeting);
-  const summary = await engagementSummarizerAgent(snapshot);
+  const summary = await engagementSummarizerAgent(meeting);
   meeting.lastSummary = summary;
   meeting.engagementHistory = meeting.engagementHistory || [];
   meeting.engagementHistory.push({
@@ -329,7 +329,7 @@ setInterval(async () => {
     if (!meeting?.events?.length) continue;
     try {
       const snapshot = buildSnapshot(meeting);
-      const summary = await engagementSummarizerAgent(snapshot);
+      const summary = await engagementSummarizerAgent(meeting);
       meeting.lastSummary = summary;
       meeting.engagementHistory = meeting.engagementHistory || [];
       meeting.engagementHistory.push({

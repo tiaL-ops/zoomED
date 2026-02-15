@@ -63,13 +63,61 @@ async function callClaudeJSON(system, user) {
   return extractJSON(textBlock.text);
 }
 
-// agent #1: engagement summarizer (accepts snapshot with pre-built users)
-export async function engagementSummarizerAgent(snapshot) {
-  const users = snapshot.users || [];
+// agent #1: engagement summarizer
+export async function engagementSummarizerAgent(meeting) {
+  const now = Date.now();
+  const windowMs = 5 * 60 * 1000;
+  const events = (meeting.events || []).filter((e) => e.ts != null && now - e.ts <= windowMs);
+
+  const usersMap = new Map();
+  for (const e of events) {
+    const uid = e.userId ?? "anonymous";
+    const u = usersMap.get(uid) || {
+      userId: uid,
+      displayName: e.displayName ?? uid,
+      signals: {
+        polls_answered: 0,
+        polls_missed: 0,
+        chat_messages: 0,
+        avg_response_latency_ms: 0,
+        cv_attention_score: e.cv_attention_score ?? null,
+        video_on: e.video_on ?? true,
+        _latencies: [],
+      },
+    };
+    if (e.type === "QUIZ_ANSWER" || e.type === "QUIZ_RESPONSE") {
+      if (e.isCorrect === true || e.isCorrect === false) {
+        u.signals.polls_answered += 1;
+        if (e.responseTimeMs != null) u.signals._latencies.push(e.responseTimeMs);
+      }
+    }
+    if (e.type === "CHAT_MESSAGE" || e.type === "CHAT") {
+      u.signals.chat_messages += 1;
+    }
+    if (e.type === "ATTENTION_SCORE" || e.type === "GAZE") {
+      const score = e.cv_attention_score ?? e.avgGaze ?? e.gazeScore;
+      if (score != null) {
+        u.signals.cv_attention_score = u.signals.cv_attention_score != null
+          ? (u.signals.cv_attention_score + Number(score)) / 2
+          : Number(score);
+      }
+    }
+    usersMap.set(uid, u);
+  }
+
+  const users = Array.from(usersMap.values()).map((u) => {
+    const arr = u.signals._latencies;
+    u.signals.avg_response_latency_ms = arr.length
+      ? arr.reduce((a, b) => a + b, 0) / arr.length
+      : 0;
+    delete u.signals._latencies;
+    return u;
+  });
 
   const system = `
 You are an engagement summarizer for a live Zoom class.
 You ONLY analyze engagement signals (polls, chat, attention scores).
+An active chat user is someone who sends at least one message (chat_messages >= 1).
 For each user, assign engagement 1 (low), 2 (medium), or 3 (high).
 Return STRICT JSON:
 {

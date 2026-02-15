@@ -12,7 +12,7 @@ let unfocusedSinceMs = null;
 let lastFocusPopupMs = 0;
 let meetingWs = null;
 const FOCUS_POPUP_COOLDOWN_MS = 7000;   // 7 sec between popups (was 12)
-const UNFOCUSED_TRIGGER_MS = 5000;     // 5 sec looking away before popup (notes, pen, etc. should not trigger)
+const UNFOCUSED_TRIGGER_MS = 4000;     // 4 sec looking away before popup (slightly faster, still not too aggressive)
 const NUDGE_POPUP_AUTO_QUESTION_MS = 18000;  // 18 sec: if user doesn't pick, trigger question agent
 const LOOK_AWAY_COUNT_FOR_QUIZ = 3;    // after 3 look-aways, pop sidebar and trigger material quiz
 const QUIZ_COOLDOWN_MS = 2 * 60 * 1000; // after answering, don't show new questions for 2 min (until next disengagement)
@@ -21,7 +21,6 @@ let focusPopupShowCount = 0;           // how many times we've shown the focus p
 let sidebarQuizCooldownUntil = 0;     // ignore POLL_SUGGESTION until this time (so questions don't loop)
 let questionRoundActive = false;      // while answering sidebar questions, pause nudge flow
 let nudgeGraceUntil = 0;              // absolute timestamp until nudges are paused
-const FOCUS_GAME_URL = "http://localhost:5173/videoapp";
 const SERVER_WS_PORT = 3000;
 const ATTENTION_POST_INTERVAL_MS = 5000;  // throttle attention events to server
 let currentMeetingId = null;
@@ -398,12 +397,12 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
 
   const avgEAR = (leftEAR + rightEAR) / 2;
   const eyesClosed = avgEAR < 0.18;
-  // Wider "focused" band so typing at keyboard / quick glances don't trigger "not paying attention"
+  // Slightly stricter "focused" band so eyes need to be more forward.
   const gazeFocused =
-    gazePointNormalized.x > 0.32 &&
-    gazePointNormalized.x < 0.68 &&
-    gazePointNormalized.y > 0.26 &&
-    gazePointNormalized.y < 0.74;
+    gazePointNormalized.x > 0.36 &&
+    gazePointNormalized.x < 0.64 &&
+    gazePointNormalized.y > 0.30 &&
+    gazePointNormalized.y < 0.70;
   const gazeNear = gazePointNormalized.x > 0.20 && gazePointNormalized.x < 0.80 &&
     gazePointNormalized.y > 0.18 && gazePointNormalized.y < 0.82;
 
@@ -412,10 +411,10 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
   const irisFocused =
     leftIrisRatio !== null &&
     rightIrisRatio !== null &&
-    leftIrisRatio > 0.30 &&
-    leftIrisRatio < 0.70 &&
-    rightIrisRatio > 0.30 &&
-    rightIrisRatio < 0.70;
+    leftIrisRatio > 0.35 &&
+    leftIrisRatio < 0.65 &&
+    rightIrisRatio > 0.35 &&
+    rightIrisRatio < 0.65;
 
   let state = "distracted";
   if (eyesClosed) {
@@ -525,7 +524,7 @@ function updateFocusPopup(state) {
     return;
   }
   const now = Date.now();
-  // Do not auto-hide popup when user looks back; they must choose "I am back" or "Open focus game"
+  // Do not auto-hide popup when user looks back; they must choose "I am back"
   if (state === "focused") {
     unfocusedSinceMs = null;
     return;

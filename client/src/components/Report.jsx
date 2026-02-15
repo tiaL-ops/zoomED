@@ -112,7 +112,6 @@ function Report() {
   const [popupNudge, setPopupNudge] = useState(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [previewAttendeeId, setPreviewAttendeeId] = useState('');
-  const [transcriptLoading, setTranscriptLoading] = useState(false);
 
   const fetchReport = useCallback(async (runSummaryFirst = false) => {
     if (!meetingId.trim()) return;
@@ -211,26 +210,6 @@ function Report() {
     }
   };
 
-  const loadSampleTranscript = useCallback(async () => {
-    if (!meetingId.trim()) return;
-    setTranscriptLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId.trim())}/transcript/load-sample`, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || res.statusText);
-      }
-      await fetchReport();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setTranscriptLoading(false);
-    }
-  }, [meetingId, fetchReport]);
-
   return (
     <div style={{ padding: '40px 32px 48px', maxWidth: '1100px', margin: '0 auto', fontFamily: 'system-ui, sans-serif', fontSize: '17px', minHeight: 'calc(100vh - 60px)' }}>
       <div style={{ marginBottom: '32px' }}>
@@ -269,14 +248,6 @@ function Report() {
             End meeting
           </button>
         )}
-        <button
-          onClick={loadSampleTranscript}
-          disabled={transcriptLoading || !meetingId.trim()}
-          style={{ padding: '10px 20px', background: '#64748b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 500, cursor: transcriptLoading ? 'not-allowed' : 'pointer' }}
-          title="Load sample transcript text for testing questions and summaries"
-        >
-          {transcriptLoading ? 'Loading…' : 'Load sample transcript'}
-        </button>
         {liveConnected && !report?.endedAt && <span style={{ color: '#16a34a', fontSize: '15px', fontWeight: 500 }}>● Live</span>}
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', color: '#64748b', marginLeft: '8px' }}>
           Preview as

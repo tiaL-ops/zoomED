@@ -1,6 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 function VideoApp() {
+  const [searchParams] = useSearchParams();
+  const meetingIdFromUrl = searchParams.get('meetingId') || '';
+  const userIdFromUrl = searchParams.get('userId') || '';
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [status, setStatus] = useState('OFFLINE');
@@ -51,13 +55,17 @@ function VideoApp() {
       
       const avgGaze = (leftGaze + rightGaze) / 2;
 
-      // Send gaze data to backend for analysis
+      // Send gaze data to backend for analysis (include meetingId/userId from URL to feed agents)
+      const body = { avgGaze };
+      if (meetingIdFromUrl) body.meetingId = meetingIdFromUrl;
+      if (userIdFromUrl) body.userId = userIdFromUrl;
+      if (userIdFromUrl) body.displayName = userIdFromUrl;
       fetch('/api/analyze-gaze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ avgGaze })
+        body: JSON.stringify(body)
       })
       .then(response => response.json())
       .then(data => {

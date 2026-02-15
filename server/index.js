@@ -11,6 +11,10 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+if (!process.env.CLAUDE_API_KEY) {
+  console.warn("CLAUDE_API_KEY not set. Copy server/.env.example to server/.env and add your key. Get one at https://console.anthropic.com/settings/keys");
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

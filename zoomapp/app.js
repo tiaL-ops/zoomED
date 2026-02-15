@@ -16,8 +16,35 @@ const UNFOCUSED_TRIGGER_MS = 2000;      // 2 sec looking away to trigger (was 3)
 const NUDGE_POPUP_AUTO_QUESTION_MS = 18000;  // 18 sec: if user doesn't pick, trigger question agent
 const FOCUS_GAME_URL = "http://localhost:5173/videoapp";
 const SERVER_WS_PORT = 3000;
+const ATTENTION_POST_INTERVAL_MS = 5000;  // throttle attention events to server
 let currentMeetingId = null;
+let currentUserId = null;
+let currentUserDisplayName = null;
 let nudgePopupTimeoutId = null;
+let lastAttentionPostMs = 0;
+
+function postEventToServer(event) {
+  if (!currentMeetingId) return;
+  var scheme = location.protocol === "https:" ? "https:" : "http:";
+  var host = location.hostname || "localhost";
+  fetch(scheme + "//" + host + ":" + SERVER_WS_PORT + "/api/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...event, meetingId: currentMeetingId, ts: Date.now() }),
+  }).catch(function () {});
+}
+
+function forwardChatToServer(chatData) {
+  var sender = chatData && chatData.sender;
+  var userId = sender && (sender.userId != null ? String(sender.userId) : sender.participantId);
+  var displayName = (sender && (sender.name || sender.displayName)) || "Unknown";
+  if (!userId) userId = "unknown";
+  postEventToServer({
+    type: "CHAT_MESSAGE",
+    userId: userId,
+    displayName: displayName,
+  });
+}
 
 function showError(message) {
   const errorDiv = document.getElementById("error-message");
@@ -214,6 +241,20 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
   });
 
   updateFocusPopup(state);
+
+  // Send attention to server (throttled) for engagement summarizer
+  if (currentMeetingId && currentUserId && eyeTracker) {
+    if (now - lastAttentionPostMs >= ATTENTION_POST_INTERVAL_MS) {
+      lastAttentionPostMs = Date.now();
+      var score = state === "focused" ? 0.85 : state === "bored" ? 0.2 : 0.45;
+      postEventToServer({
+        type: "ATTENTION_SCORE",
+        userId: currentUserId,
+        displayName: currentUserDisplayName || "Unknown",
+        cv_attention_score: score,
+      });
+    }
+  }
 }
 
 function getFocusPopupElements() {
@@ -596,9 +637,29 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           console.log("Join success:", success);
           document.body.classList.add("meeting-active");
           currentMeetingId = String(meetingNumber);
+          currentUserId = "u-" + (userName || "user").replace(/\W/g, "_").toLowerCase().slice(0, 30);
+          currentUserDisplayName = userName || "Unknown";
           bindFocusTrackingButton();
           connectMeetingWebSocket(meetingNumber);
           bindPollPopupClose();
+          // Bootstrap meeting: register participant so agents have data
+          postEventToServer({
+            type: "participant_joined",
+            userId: currentUserId,
+            displayName: currentUserDisplayName,
+          });
+          // Listen for chat and forward to server for engagement summarizer
+          try {
+            ZoomMtg.inMeetingServiceListener("onReceiveChatMsg", forwardChatToServer);
+          } catch (e) {
+            console.warn("Chat listener registration failed:", e);
+          }
+          var reportLink = document.getElementById("open-report-link");
+          if (reportLink) {
+            var scheme = location.protocol === "https:" ? "https:" : "http:";
+            var host = location.hostname || "localhost";
+            reportLink.href = scheme + "//" + host + ":5173/report?meetingId=" + encodeURIComponent(currentMeetingId);
+          }
           // Do not auto-start camera; only start when user clicks "Enable focus tracking" (privacy)
         },
         error: (error) => {
@@ -611,6 +672,8 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           stopEyeTracking();
           closeMeetingWebSocket();
           currentMeetingId = null;
+          currentUserId = null;
+          currentUserDisplayName = null;
           const joinButton = document.getElementById("join-button");
           joinButton.disabled = false;
           joinButton.textContent = "Join Meeting";
@@ -649,6 +712,8 @@ function bindPollPopupClose() {
 window.addEventListener("beforeunload", () => {
   document.body.classList.remove("meeting-active");
   currentMeetingId = null;
+  currentUserId = null;
+  currentUserDisplayName = null;
   stopEyeTracking();
   closeMeetingWebSocket();
   ZoomMtg.endMeeting({});

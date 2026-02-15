@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 
 const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
 
 function Report() {
-  const [meetingId, setMeetingId] = useState('default');
+  const [searchParams] = useSearchParams();
+  const meetingIdFromUrl = searchParams.get('meetingId') || '';
+  const [meetingId, setMeetingId] = useState(meetingIdFromUrl || 'default');
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -31,6 +34,10 @@ function Report() {
       setLoading(false);
     }
   }, [meetingId]);
+
+  useEffect(() => {
+    if (meetingIdFromUrl) setMeetingId(meetingIdFromUrl);
+  }, [meetingIdFromUrl]);
 
   useEffect(() => {
     fetchReport();

@@ -7,11 +7,15 @@ yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
 ```
 start-all.bat
 ```
+<<<<<<< HEAD
 # MACCCCC - to run (at highest level)
 ```
 chmod +x start-all.sh
 ./start-all.sh
 ```
+=======
+
+>>>>>>> 5f7493e (removed curl commands, fully autonomous updates)
 # zoom working but very basic, need to figure out how to record meeting 
 
 in the meantime:
@@ -109,6 +113,21 @@ see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit
 
 ---
 
+# fully automated flow (no curl needed)
+
+You can run everything without manual `curl` or POST commands:
+
+1. **Run `start-all.bat`** from the project root to start server, client, Zoom auth, and zoomapp.
+2. **Join a meeting** via the zoomapp (http://localhost:8080). On join, the app automatically:
+   - Sends `participant_joined` to bootstrap the meeting
+   - Forwards all **chat messages** to the server
+   - Sends **attention scores** (when you enable focus tracking) every 5 seconds
+3. **Agents run automatically** every 5 minutes; no `POST /api/tick` needed.
+4. **Teacher report:** Click **"Teacher: Open Report"** in the zoomapp (shown when in meeting) to open the Report page with the meeting ID pre-filled. Or open `http://localhost:5173/report?meetingId=YOUR_ZOOM_MEETING_ID`.
+5. **VideoApp (optional):** Open `/videoapp?meetingId=X&userId=Y` and start the camera to feed gaze into the same meeting. Useful when using the VideoApp standalone (not via zoomapp).
+
+---
+
 # how to test the integration
 
 **Prereqs:** Node 18+, `CLAUDE_API_KEY` in `server/.env`.
@@ -175,8 +194,9 @@ curl -X POST http://localhost:3000/api/tick \
 
 ## 6. test gaze feeding into meeting state (optional)
 
-* the video app currently does not send `meetingId`/`userId`. to feed gaze into agents, add those fields to the `/api/analyze-gaze` request body in `client/src/components/VideoApp.jsx`.  
-* after that, start the camera, send gaze a few times, then run **report** or **POST /api/tick** for the same `meetingId` to see attention in the summary
+* open **VideoApp** with URL params: `/videoapp?meetingId=default&userId=u1`
+* start the camera and send gaze; attention is stored for that `meetingId`/`userId`
+* run **report** or wait for the 5‑minute periodic summary to see attention in the summary. (The zoomapp also sends attention when focus tracking is enabled—no URL params needed.)
 
 ## 7. test the nudge agent (refocus popup for attendees)
 
@@ -184,6 +204,32 @@ curl -X POST http://localhost:3000/api/tick \
 * on the **Report** page, enter a **Preview as attendee (userId)** value that matches someone who got a nudge (e.g. `u2` or `Sam`), and stay on the page with WebSocket connected
 * after the next agent run (or run `/api/tick` again), the server broadcasts `NUDGE` for that user; the Report page shows a **“Quick check-in” popup** with the supportive message (this is what the attendee would see in the Zoom app)
 * the Report page also shows **Engagement over time** and **Recent nudges sent** so the teacher can see when engagement was high vs low and what nudges were sent
+
+## 8. test chat from Zoom app (live meeting chat → engagement summarizer)
+
+Chat messages sent during a Zoom meeting are forwarded to the server and used by the engagement summarizer (alongside polls and attention scores).
+
+1. **Start the Zoom app stack:**
+   ```bash
+   # Terminal 1 – auth endpoint (port 4000)
+   cd zoomapp/meetingsdk-auth-endpoint-sample
+   npm install && npm start
+
+   # Terminal 2 – zoomapp (port 8080)
+   cd zoomapp
+   npx serve -p 8080
+   ```
+   Ensure the **server** (port 3000) and **client** (port 5173) are also running.
+
+2. **Join a meeting** at http://localhost:8080 with your meeting ID, name, and passcode.
+
+3. **Send a chat message** in the Zoom meeting (to Everyone or the host). The zoomapp listens for `onReceiveChatMsg` and forwards each message to `POST /api/events` as `type: "CHAT_MESSAGE"`.
+
+4. **Verify chat in engagement summary:**
+   * Run `POST /api/tick` with your meeting ID (or wait for the 5‑minute periodic run).
+   * Open **Report**, set Meeting ID to your Zoom meeting ID, and refresh. The summary should include chat activity in per-user engagement.
+
+**Note:** Only participants whose client runs the zoomapp will forward chat. Typically the **host** runs the zoomapp and forwards all chat messages to the backend.
 
 ---
 

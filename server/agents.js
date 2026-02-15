@@ -2,12 +2,17 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 let anthropic = null;
+let apiKeyWarned = false;
 
 function getAnthropicClient() {
-  if (!anthropic) {
-    if (!process.env.CLAUDE_API_KEY) {
-      throw new Error("CLAUDE_API_KEY environment variable is not set");
+  if (!process.env.CLAUDE_API_KEY) {
+    if (!apiKeyWarned) {
+      apiKeyWarned = true;
+      console.warn("CLAUDE_API_KEY not set. Create server/.env with CLAUDE_API_KEY=your_key. Get one at https://console.anthropic.com/settings/keys");
     }
+    return null;
+  }
+  if (!anthropic) {
     anthropic = new Anthropic({ apiKey: process.env.CLAUDE_API_KEY });
     console.log("Claude API initialized successfully");
   }
@@ -44,6 +49,7 @@ function extractJSON(text) {
 
 async function callClaudeJSON(system, user) {
   const client = getAnthropicClient();
+  if (!client) return null;
   const resp = await client.messages.create({
     model: "claude-3-haiku-20240307",
     max_tokens: 1024,
@@ -57,48 +63,9 @@ async function callClaudeJSON(system, user) {
   return extractJSON(textBlock.text);
 }
 
-// agent #1: engagement summarizer
-export async function engagementSummarizerAgent(meeting) {
-  const now = Date.now();
-  const windowMs = 5 * 60 * 1000;
-  const events = (meeting.events || []).filter((e) => now - e.ts <= windowMs);
-
-  const usersMap = new Map();
-  for (const e of events) {
-    const u = usersMap.get(e.userId) || {
-      userId: e.userId,
-      displayName: e.displayName,
-      signals: {
-        polls_answered: 0,
-        polls_missed: 0,
-        chat_messages: 0,
-        avg_response_latency_ms: 0,
-        cv_attention_score: e.cv_attention_score ?? null,
-        video_on: e.video_on ?? true,
-        _latencies: [],
-      },
-    };
-    if (e.type === "QUIZ_ANSWER") {
-      if (e.isCorrect || e.isCorrect === false) {
-        u.signals.polls_answered += 1;
-        u.signals._latencies.push(e.responseTimeMs);
-      }
-    }
-    if (e.type === "CHAT_MESSAGE") {
-      u.signals.chat_messages += 1;
-    }
-    // Add other event types as needed
-    usersMap.set(e.userId, u);
-  }
-
-  const users = Array.from(usersMap.values()).map((u) => {
-    const arr = u.signals._latencies;
-    u.signals.avg_response_latency_ms = arr.length
-      ? arr.reduce((a, b) => a + b, 0) / arr.length
-      : 0;
-    delete u.signals._latencies;
-    return u;
-  });
+// agent #1: engagement summarizer (accepts snapshot with pre-built users)
+export async function engagementSummarizerAgent(snapshot) {
+  const users = snapshot.users || [];
 
   const system = `
 You are an engagement summarizer for a live Zoom class.
@@ -113,15 +80,22 @@ Return STRICT JSON:
 }
 `;
 
-  const user = JSON.stringify({ users });
-  return await callClaudeJSON(system, user);
+  const result = await callClaudeJSON(system, JSON.stringify({ users }));
+  if (result) return result;
+  // Fallback when CLAUDE_API_KEY not set
+  return {
+    class_engagement: 2,
+    per_user: users.map((u) => ({ userId: u.userId || u.displayName, engagement: 2, reason: "API not configured" })),
+    cold_students: [],
+    summary: "Claude API key not set—engagement features disabled. Add CLAUDE_API_KEY to server/.env",
+  };
 }
 
-// agent #2: meeting coordinator agent
-export async function meetingCoordinatorAgent(summary, meeting) {
-  const recentPolls = (meeting.events || [])
-    .filter((e) => e.type === "QUIZ_ANSWER")
-    .slice(-20); // simplistic
+// agent #2: meeting coordinator agent (accepts snapshot with recentPolls, recentTranscriptSnippets, recentQuestions)
+export async function meetingCoordinatorAgent(summary, snapshot) {
+  const recentPolls = (snapshot.recentPolls || []).slice(-20);
+  const recentTranscriptSnippets = snapshot.recentTranscriptSnippets || [];
+  const recentQuestions = snapshot.recentQuestions || [];
 
   const system = `
 You are the meeting coordinator for a Zoom class.
@@ -145,13 +119,16 @@ Give GENERATE_POLL or PROMPT_INSTRUCTOR when class_engagement is 1 or many cold_
   const user = JSON.stringify({
     summary,
     recentPolls,
-    recentTranscriptSnippets: meeting.recentTranscriptSnippets || [],
+    recentTranscriptSnippets,
+    recentQuestions,
   });
 
-  return await callClaudeJSON(system, user);
+  const result = await callClaudeJSON(system, user);
+  if (result) return result;
+  return { action: "NONE", target_topic: null, reason: "API not configured", priority: "low" };
 }
 
-// agent #3: nudge agent – first line of defense: gentle nudge with leeway (away, restroom, parent, etc.)
+// agent #3: nudge agent – first line of defense: gentle nudge with leeway (away, restroom, speaking to someone briefly, etc.)
 export async function nudgeAgent(summary, options = {}) {
   const meetingType = options.meetingType || 'education'; // 'education' | 'meeting'
   const cold = summary.cold_students || [];
@@ -179,7 +156,9 @@ If there are no low-engagement users to nudge, return: { "nudges": [] }.
     cold_students: cold,
     class_summary: summary.summary,
   });
-  return await callClaudeJSON(system, user);
+  const result = await callClaudeJSON(system, user);
+  if (result) return result;
+  return { nudges: [] };
 }
 
 // agent 4: quiz/poll generation agent
@@ -206,5 +185,7 @@ No explanations.
     transcriptSnippet,
   });
 
-  return await callClaudeJSON(system, user);
+  const result = await callClaudeJSON(system, user);
+  if (result) return result;
+  return { topic, questions: [{ id: "q1", type: "mcq", question: "API not configured—add CLAUDE_API_KEY to server/.env", options: ["OK"], correctIndex: 0 }] };
 }

@@ -275,6 +275,27 @@
         #focus-tracking-reopen-btn.visible {
             display: block;
         }
+        #open-report-link {
+            display: none;
+            position: fixed;
+            left: 20px;
+            bottom: 72px;
+            z-index: 9996;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            background: #2e7d32;
+            color: #fff;
+            text-decoration: none;
+            box-shadow: 0 2px 12px rgba(46, 125, 50, 0.35);
+        }
+        body.meeting-active #open-report-link {
+            display: inline-block;
+        }
+        #open-report-link:hover {
+            background: #1b5e20;
+            color: #fff;
+        }
         #focus-tracking-reopen-btn:hover {
             background: #095196;
         }
@@ -406,6 +427,7 @@
         <button type="button" id="focus-tracking-turn-off-btn">Turn off</button>
     </div>
     <button type="button" id="focus-tracking-reopen-btn" aria-label="Show focus tracking options">Focus tracking</button>
+    <a id="open-report-link" href="#" target="_blank" rel="noopener noreferrer">Teacher: Open Report</a>
     <div id="focus-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="focus-popup-title">
         <div id="focus-popup">
             <h2 id="focus-popup-title">Claude: Quick focus check</h2>

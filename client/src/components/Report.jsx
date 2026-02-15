@@ -119,11 +119,15 @@ function Report() {
     setError(null);
     try {
       if (runSummaryFirst) {
-        await fetch('/api/tick', {
+        const tickRes = await fetch('/api/tick', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ meetingId: meetingId.trim() }),
         });
+        if (!tickRes.ok) {
+          const data = await tickRes.json().catch(() => ({}));
+          setError(data.error || 'Could not run instant summary; showing latest saved report.');
+        }
       }
       const res = await fetch(`/api/report?meetingId=${encodeURIComponent(meetingId.trim())}`);
       if (!res.ok) {
@@ -133,8 +137,12 @@ function Report() {
       const data = await res.json();
       setReport(data);
     } catch (e) {
-      setError(e.message);
-      setReport(null);
+      const msg = e?.message || 'Unknown error';
+      if (msg === 'Internal Server Error' || msg.includes('Failed to fetch')) {
+        setError('Backend is offline. Start server with `cd server && node index.js`.');
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }

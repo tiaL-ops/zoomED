@@ -412,7 +412,6 @@ app.post('/api/nudge-timeout', async (req, res) => {
   }
 });
 
-<<<<<<< HEAD
 // ----- End meeting: mark as ended so report shows "engagement over the meeting" as final -----
 app.post('/api/meeting-ended', (req, res) => {
   const { meetingId } = req.body;
@@ -421,7 +420,8 @@ app.post('/api/meeting-ended', (req, res) => {
   if (!meeting) return res.status(404).json({ error: 'no meeting or no data yet' });
   meeting.endedAt = new Date().toISOString();
   res.json({ ok: true, endedAt: meeting.endedAt });
-=======
+});
+
 // Sample material for question agent when meeting has no content (for testing)
 let sampleMaterialCache = null;
 async function getSampleMaterial() {
@@ -490,7 +490,6 @@ app.post('/api/meetings/:meetingId/trigger-material-quiz', async (req, res) => {
     console.error('Quiz poll agent error:', err);
     res.status(500).json({ error: err.message });
   }
->>>>>>> origin/feature/engagement-sidebar-nudge-quiz
 });
 
 // ----- Report for teacher: latest summary, time-based engagement, recent nudges -----

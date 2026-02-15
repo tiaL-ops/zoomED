@@ -3,11 +3,6 @@ ZoomMtg.setZoomJSLib("https://source.zoom.us/3.8.10/lib", "/av");
 ZoomMtg.preLoadWasm();
 ZoomMtg.prepareWebSDK();
 
-import { setupLiveCaptionListener } from './CAPTION_INTEGRATION.js';
-
-// During app initialization:
-setupLiveCaptionListener();
-
 // Auth endpoint (runs on port 4000)
 const authEndpoint = "http://localhost:4000";
 const leaveUrl = window.location.origin;
@@ -29,6 +24,7 @@ let currentUserId = null;
 let currentUserDisplayName = null;
 let nudgePopupTimeoutId = null;
 let lastAttentionPostMs = 0;
+let hostRoleWatcherIntervalId = null;
 
 function postEventToServer(event) {
   if (!currentMeetingId) return;
@@ -559,6 +555,7 @@ function updateFocusTrackingUI() {
   } else {
     hideFocusTrackingOnBar();
     showFocusTrackingOptIn();
+    showReopenButton();
   }
 }
 
@@ -601,6 +598,85 @@ function bindFocusTrackingButton() {
   }
 
   updateFocusTrackingUI();
+}
+
+function setReportLinkForHost(show) {
+  var reportLink = document.getElementById("open-report-link");
+  if (!reportLink || !currentMeetingId) return;
+  var scheme = location.protocol === "https:" ? "https:" : "http:";
+  var host = location.hostname || "localhost";
+  reportLink.href = scheme + "//" + host + ":5173/report?meetingId=" + encodeURIComponent(currentMeetingId);
+  if (show) {
+    reportLink.style.display = "flex";
+    reportLink.style.alignItems = "center";
+    reportLink.style.justifyContent = "center";
+  } else {
+    reportLink.style.display = "none";
+  }
+}
+
+function updateTeacherReportLinkVisibility(initialRoleFromForm) {
+  var reportLink = document.getElementById("open-report-link");
+  if (!reportLink || !currentMeetingId) return;
+  if (initialRoleFromForm !== undefined && initialRoleFromForm !== null) {
+    setReportLinkForHost(Number(initialRoleFromForm) === 1);
+  }
+  if (typeof ZoomMtg === "undefined" || !ZoomMtg.getAttendeeslist) {
+    return;
+  }
+  var runAfter = Number(initialRoleFromForm) === 1 ? 800 : 0;
+  function doFetch() {
+  ZoomMtg.getAttendeeslist({
+    success: function (res) {
+      var list = Array.isArray(res)
+        ? res
+        : (res && (res.attendeesList || (res.result && (res.result.attendeesList || res.result))));
+      if (!Array.isArray(list)) list = [];
+      var me = list.find(function (u) {
+        return u && (u.isCurrentUser === true || u.isMe === true || u.myself === true);
+      }) || list[0];
+      var isHost = me && (
+        me.isHost === true ||
+        me.bIsHost === true ||
+        me.role === 1 ||
+        me.role === "1" ||
+        me.userRole === 1 ||
+        me.userRole === "1"
+      );
+      var notHost = me && (
+        me.isHost === false ||
+        me.bIsHost === false ||
+        me.role === 0 ||
+        me.role === "0" ||
+        me.userRole === 0 ||
+        me.userRole === "0"
+      );
+      if (isHost) {
+        setReportLinkForHost(true);
+      } else if (notHost) {
+        setReportLinkForHost(false);
+      }
+    },
+    error: function () {
+    },
+  });
+  }
+  if (runAfter) setTimeout(doFetch, runAfter); else doFetch();
+}
+
+function stopHostRoleWatcher() {
+  if (hostRoleWatcherIntervalId) {
+    clearInterval(hostRoleWatcherIntervalId);
+    hostRoleWatcherIntervalId = null;
+  }
+}
+
+function startHostRoleWatcher() {
+  stopHostRoleWatcher();
+  // Fallback: role transfer/reclaim events can be inconsistent, so re-check periodically.
+  hostRoleWatcherIntervalId = setInterval(function () {
+    updateTeacherReportLinkVisibility(null);
+  }, 2000);
 }
 
 function joinMeeting() {
@@ -707,11 +783,32 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           } catch (e) {
             console.warn("Chat listener registration failed:", e);
           }
-          var scheme = location.protocol === "https:" ? "https:" : "http:";
-          var host = location.hostname || "localhost";
-          var reportUrl = scheme + "//" + host + ":5173/report?meetingId=" + encodeURIComponent(currentMeetingId);
-          var reportLink = document.getElementById("open-report-link");
-          if (reportLink) reportLink.href = reportUrl;
+          try {
+            ZoomMtg.inMeetingServiceListener("onUserUpdate", function () {
+              updateTeacherReportLinkVisibility(null);
+            });
+          } catch (e) {
+            console.warn("onUserUpdate listener failed:", e);
+          }
+          try {
+            ZoomMtg.inMeetingServiceListener("onUserJoin", function () {
+              updateTeacherReportLinkVisibility(null);
+            });
+            ZoomMtg.inMeetingServiceListener("onUserLeave", function () {
+              updateTeacherReportLinkVisibility(null);
+            });
+          } catch (e) {
+            console.warn("user join/leave listener failed:", e);
+          }
+          try {
+            ZoomMtg.inMeetingServiceListener("onClaimStatus", function () {
+              updateTeacherReportLinkVisibility(null);
+            });
+          } catch (e) {
+            console.warn("onClaimStatus listener failed:", e);
+          }
+          updateTeacherReportLinkVisibility(role);
+          startHostRoleWatcher();
           // Do not auto-start camera; only start when user clicks "Enable focus tracking" (privacy)
         },
         error: (error) => {
@@ -729,6 +826,7 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           currentMeetingId = null;
           currentUserId = null;
           currentUserDisplayName = null;
+          stopHostRoleWatcher();
           const joinButton = document.getElementById("join-button");
           joinButton.disabled = false;
           joinButton.textContent = "Join Meeting";
@@ -807,6 +905,7 @@ window.addEventListener("beforeunload", () => {
   currentUserId = null;
   currentUserDisplayName = null;
   focusPopupShowCount = 0;
+  stopHostRoleWatcher();
   stopEyeTracking();
   closeMeetingWebSocket();
   ZoomMtg.endMeeting({});

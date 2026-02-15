@@ -279,37 +279,50 @@
         #focus-tracking-reopen-btn {
             display: none;
             position: fixed;
-            right: 20px;
-            bottom: 72px;
-            z-index: 9996;
-            padding: 8px 14px;
-            border-radius: 8px;
+            right: 14px;
+            bottom: 96px;
+            z-index: 99999;
+            width: 40px;
+            height: 40px;
+            max-width: 40px;
+            padding: 0;
+            border-radius: 10px;
             font-size: 12px;
+            font-weight: 600;
+            line-height: 40px;
             background: #0b65c2;
             color: #fff;
             border: none;
             cursor: pointer;
-            box-shadow: 0 2px 12px rgba(11, 101, 194, 0.35);
+            box-shadow: 0 2px 10px rgba(11, 101, 194, 0.4);
+            box-sizing: border-box;
         }
         #focus-tracking-reopen-btn.visible {
-            display: block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
         }
         #open-report-link {
             display: none;
             position: fixed;
-            left: 20px;
-            bottom: 72px;
-            z-index: 9996;
-            padding: 8px 14px;
-            border-radius: 8px;
+            left: 14px;
+            bottom: 96px;
+            z-index: 99999;
+            width: 40px;
+            height: 40px;
+            max-width: 40px;
+            padding: 0;
+            border-radius: 10px;
             font-size: 12px;
+            font-weight: 600;
+            line-height: 40px;
             background: #2e7d32;
             color: #fff;
             text-decoration: none;
-            box-shadow: 0 2px 12px rgba(46, 125, 50, 0.35);
-        }
-        body.meeting-active #open-report-link {
-            display: inline-block;
+            box-shadow: 0 2px 10px rgba(46, 125, 50, 0.4);
+            text-align: center;
+            box-sizing: border-box;
         }
         #open-report-link:hover {
             background: #1b5e20;
@@ -460,8 +473,8 @@
         <span>Focus tracking on</span>
         <button type="button" id="focus-tracking-turn-off-btn">Turn off</button>
     </div>
-    <button type="button" id="focus-tracking-reopen-btn" aria-label="Show focus tracking options">Focus tracking</button>
-    <a id="open-report-link" href="#" target="_blank" rel="noopener noreferrer">Teacher: Open Report</a>
+    <button type="button" id="focus-tracking-reopen-btn" aria-label="Show focus tracking options" title="Focus tracking">F</button>
+    <a id="open-report-link" href="#" target="_blank" rel="noopener noreferrer" title="Teacher: Open Report">R</a>
     <div id="focus-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="focus-popup-title">
         <div id="focus-popup">
             <h2 id="focus-popup-title">Nudge</h2>

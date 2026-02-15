@@ -1,175 +1,201 @@
-yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
+# zoomED - AI-Powered Engagement System
 
----
-# baddies look at this to run everything, if we change run instructions change the bat pretty please :cry:
+**TreeHacks 2026** — Real-time student engagement monitoring with multi-agent AI, computer vision attention tracking, and adaptive intervention.
 
-# to run (at highest level) - windows
-```
+## Quick Start
+
+**Windows:**
+```bash
 start-all.bat
 ```
-# mac - to run (at highest level)
-```
+
+**Mac/Linux:**
+```bash
 chmod +x start-all.sh
 ./start-all.sh
 ```
-# zoom working but very basic, need to figure out how to record meeting 
 
-in the meantime:
+Then open:
+- **Zoom App:** http://localhost:8080 (join meeting)
+- **Teacher Dashboard:** http://localhost:5173/report (view engagement analytics)
 
-* created a simple sample video
-* detect the image using **MediaPipe**
-* connect everything to **Express**
-* used a mock dataset that simulates zoom data
+Note: TO run this, you must have your own API keys 
+*Claude API key: [Get yours here](https://console.anthropic.com/settings/keys)*
+---
+
+## Functionality
+
+This system monitors student engagement during Zoom meetings and uses **multi-agent AI** to adaptively respond:
+
+### **Real-Time Monitoring**
+- **Computer Vision:** MediaPipe-based gaze tracking detects when students look away
+- **Chat Analysis:** Monitors participation in meeting chat
+- **Attendance:** Tracks join/leave events
+
+### **Multi-Agent Decision System**
+Three specialized Claude agents work together every 10 minutes:
+
+1. **Engagement Summarizer** — Analyzes overall class engagement, identifies struggling students
+2. **Nudge Agent** — Sends supportive, personalized check-ins to low-engagement students (rate-limited, non-intrusive)
+3. **Quiz Generator** — Creates adaptive questions when a student loses focus 3+ times, prompting re-engagement with material
+
+### **Teacher Dashboard**
+- Live engagement metrics and trends over time
+- Per-student attention scores
+- Timeline showing when engagement was high vs. low
+- Recent AI interventions (nudges, quizzes sent)
+
+### **Student Experience**
+- **Focus tracking opt-in** (camera-based attention detection)
+- **Gentle nudges** when attention drifts ("Quick check-in" popup)
+- **Material-based quizzes** appear in sidebar after repeated disengagement
+- **Focus game** for quick mental resets
 
 ---
 
-# to run
+## Architecture
 
-**front**
+### **Event-Driven System**
+- Frontend sends events (chat, attention, join/leave) → WebSocket server
+- Server accumulates events per meeting in memory
+- Every 10 minutes, agents analyze accumulated events and make decisions
+- Decisions broadcast back to connected clients via WebSocket
 
+### **Tech Stack**
+- **Frontend:** React + Vite
+- **Backend:** Node.js + Express + WebSocket
+- **AI:** Claude 3.5 Sonnet (multi-agent orchestration)
+- **Computer Vision:** MediaPipe Face Mesh
+- **Zoom Integration:** Zoom Meeting SDK
+
+### **Key Components**
 ```
-cd client
-npm run dev
+server/
+  ├── index.js          # Main server: WebSocket, agents, API endpoints
+  ├── agents.js         # Multi-agent logic (summarizer, nudge, quiz)
+  └── leaderboard.js    # Quiz scoring system
+
+client/
+  ├── src/
+      ├── Home.jsx      # Landing page with live engagement feed
+      └── Report.jsx    # Teacher dashboard (analytics + controls)
+
+zoomapp/
+  ├── app.js            # Zoom SDK integration + gaze tracking
+  └── index.html        # Meeting UI with engagement sidebar
 ```
 
-**back**
+---
 
+## How It Works
+
+### **1. Join Meeting**
+Student opens http://localhost:8080, enters meeting ID, and joins as attendee. Host can enable focus tracking (camera-based attention detection).
+
+### **2. Activity Tracking**
+- Every chat message → `CHAT_MESSAGE` event
+- Every 5 seconds → `ATTENTION_SCORE` event (if focus tracking on)
+- Join/leave → `participant_joined` / `participant_left` events
+
+### **3. Agent Analysis (Every 10 Minutes)**
+```python
+# Pseudocode
+engagement_data = summarize_engagement(events)
+low_engagement_users = identify_struggling_students(engagement_data)
+
+for user in low_engagement_users:
+    if should_send_nudge(user):
+        send_nudge(user, personalized_message)
+    
+    if user.look_away_count >= 3:
+        quiz = generate_quiz_on_material()
+        send_quiz(user, quiz)
 ```
-cd server  
-node index.js
-```
-**zoomap**
-is its own cuz i was not sure it will work. very messy
-to run zoom app :
 
-we need zoom repo
-### 4. Set Up Authentication Backend
+### **4. Real-Time Intervention**
+- Students see nudges as popups: *"Quick check-in: Looks like your attention drifted. Want to try a focus game?"*
+- Quizzes appear in sidebar: *"Agent question (on material)"*
+- Teacher sees everything on the dashboard timeline
 
-The Meeting SDK requires a signature from an authentication backend:
+---
 
+## 🔧 Setup (First Time Only)
+
+**Prerequisites:** Node 18+, Zoom Meeting SDK credentials
+
+### 1. Clone repo
 ```bash
-git clone https://github.com/zoom/meetingsdk-auth-endpoint-sample --depth 1
-cd meetingsdk-auth-endpoint-sample
-cp .env.example .env
+git clone <your-repo>
+cd treehackswinner2026
 ```
 
-Edit `.env` with your credentials:
-```env
-CLIENT_SECRET=your_client_secret_here
-# or
-ZOOM_MEETING_SDK_SECRET=your_sdk_secret_here
-```
-
-Start the auth backend:
+### 2. Backend setup
 ```bash
-npm install && npm run start
-```
-
-### 5. Run the Sample App
-```bash
-npm start
-```
-
-
-```
-cd zoomapp/meetingsdk-auth-endpoint-sample
-npm install
-npm start
-```
-
-new terminal:
-
-```
-cd zoomapp
-npx serve -p 8080
-```
-
-open http://localhost:8080
-
----
-
-current pages
-
-* `/` and `/report` → engagement dashboard: latest summary, **engagement over time** (graph + list), and popup every 10 min when connected via WebSocket
-
-see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit together.
-
----
-
-# new additions
-
-* **single server (index.js)** – meeting state, WebSocket, and all agents now run in one process: `/api/events`, `/api/tick`, `/api/report`, and a 10‑minute periodic summary that pushes to connected clients
-* **gaze → agents** – optional `meetingId` / `userId` in `/api/analyze-gaze` stores attention as events so the engagement summarizer can use them
-* **teacher report** – `/report` page: latest engagement summary, **time-based engagement** (“high here vs low here”), and **recent nudges sent**
-* **nudge agent** – new agent that sends **supportive, in-the-moment nudges** to low-engagement attendees (not punishment). Runs automatically with the summarizer; nudges are broadcast over WebSocket so the **attendee** sees a refocus popup. Rate-limited (same user at most once per 4 min)
-* **leaderboard** – `server/leaderboard.js` keeps per-meeting quiz scores when events include `QUIZ_ANSWER`
-* **docs** – `ARCHITECTURE.md` describes current vs target flow and where Zoom RTMS would plug in
-
----
-
-# fully automated flow (no curl needed)
-
-You can run everything without manual `curl` or POST commands:
-
-1. **Run `start-all.bat`** from the project root to start server, client, Zoom auth, and zoomapp.
-2. **Join a meeting** via the zoomapp (http://localhost:8080). On join, the app automatically:
-   - Sends `participant_joined` to bootstrap the meeting
-   - Forwards all **chat messages** to the server
-   - Sends **attention scores** (when you enable focus tracking) every 5 seconds
-3. **Agents run automatically** every 10 minutes; no `POST /api/tick` needed.
-4. **Teacher report:** Click **"Teacher: Open Report"** in the zoomapp (shown when in meeting) to open the dashboard with the meeting ID pre-filled. Or open `http://localhost:5173/report?meetingId=YOUR_ZOOM_MEETING_ID`.
-
----
-
-# how to test the integration
-
-**Prereqs:** Node 18+, `CLAUDE_API_KEY` in `server/.env`.
-
-## 1. start backend and frontend
-
-```bash
-# Terminal 1 – server (port 3000)
 cd server
 npm install
-node index.js
+cp .env.example .env
+# Edit .env: add CLAUDE_API_KEY from https://console.anthropic.com/settings/keys
 ```
 
+### 3. Frontend setup
 ```bash
-# Terminal 2 – client (port 5173)
 cd client
 npm install
-npm run dev
 ```
 
-then open **http://localhost:5173** (engagement dashboard).
-
-## 2. test the report page (no data yet)
-
-* go to **report**, leave meeting ID as default and click refresh report
-* should see error like “no meeting or no data yet” (expected until events exist).
-
-## 3. TESTING FUNCTION: send events and run agents , will be live zoom data later
-
-* **first option – POST events by hand (e.g. curl):**
-
+### 4. Zoom auth endpoint
 ```bash
+cd zoomapp/meetingsdk-auth-endpoint-sample
+npm install
+# .env already has ZOOM_MEETING_SDK_KEY and ZOOM_MEETING_SDK_SECRET env variables, but you need to generate keys and add them in
+```
+
+After setup, just run **`start-all.bat`** (Windows) or **`./start-all.sh`** (Mac).
+
+---
+
+##  Testing & Development
+
+### **Automated Flow**
+1. Run `start-all.bat` (or `.sh`)
+2. Join meeting at http://localhost:8080
+3. Chat messages and attention are tracked automatically
+4. Agents run every 10 minutes
+5. View teacher dashboard at http://localhost:5173/report
+
+### **Manual Agent Trigger**
+To test agents immediately without waiting:
+```bash
+curl -X POST http://localhost:3000/api/tick \
+  -H "Content-Type: application/json" \
+  -d '{"meetingId":"YOUR_MEETING_ID"}'
+```
+
+### **Mock Events (No Zoom Meeting)**
+```bash
+# Simulate a chat message
 curl -X POST http://localhost:3000/api/events \
   -H "Content-Type: application/json" \
   -d '{"meetingId":"default","type":"CHAT_MESSAGE","userId":"u1","displayName":"Alex"}'
 
+# Simulate attention score
 curl -X POST http://localhost:3000/api/events \
   -H "Content-Type: application/json" \
   -d '{"meetingId":"default","type":"ATTENTION_SCORE","userId":"u2","displayName":"Sam","cv_attention_score":0.5}'
 ```
 
-* **option 2 - trigger one agent run**
+Then view results at http://localhost:5173/report?meetingId=default
 
-```bash
-curl -X POST http://localhost:3000/api/tick \
-  -H "Content-Type: application/json" \
-  -d '{"meetingId":"default"}'
+### **Adjust Agent Timing**
+In `server/index.js`, change:
+```javascript
+const SUMMARY_INTERVAL_MS = 10 * 60 * 1000;  // 10 minutes
+// To:
+const SUMMARY_INTERVAL_MS = 60 * 1000;  // 1 minute (for testing)
 ```
 
+<<<<<<< HEAD
+=======
 * go back to **Report**, click **Update summary** — you should see a summary (class engagement, per-user, students losing focus) and last decision.
 
 ## 4. test the 10-minute popup
@@ -243,6 +269,10 @@ curl -X POST http://localhost:3000/api/meetings/YOUR_MEETING_ID/lecture \
   -d '{"text": "Today we cover the Work-Energy Theorem. Net work equals change in kinetic energy. W = ΔKE."}'
 ```
 
+>>>>>>> 2ee19f43f6a1eea13b901b0274534a99f0755dcc
 ---
 
-**Claude API key:** [Create a key here](https://platform.claude.com/settings/keys) and set `CLAUDE_API_KEY` in `server/.env`.
+## Built for TreeHacks 2026
+
+**Team:** Building adaptive learning systems with AI + computer vision
+**Stack:** Zoom SDK, Claude 3.5 Sonnet, MediaPipe, React, Node.js

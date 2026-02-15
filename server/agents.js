@@ -47,12 +47,12 @@ function extractJSON(text) {
   return JSON.parse(jsonStr);
 }
 
-async function callClaudeJSON(system, user) {
+async function callClaudeJSON(system, user, maxTokens = 1024) {
   const client = getAnthropicClient();
   if (!client) return null;
   const resp = await client.messages.create({
     model: "claude-3-haiku-20240307",
-    max_tokens: 1024,
+    max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: user }],
   });
@@ -230,18 +230,30 @@ Return STRICT JSON only:
 }
 
 // agent 4: quiz/poll generation agent
-// NOW PERSONALIZED TO PARTICIPANT CONTEXT
-export async function quizPollAgent(participantContext, classContext) {
+// NOW PERSONALIZED TO PARTICIPANT CONTEXT + KNOWLEDGE GRAPH AWARE
+export async function quizPollAgent(participantContext, classContext, knowledgeGraph = null) {
   const difficulty = participantContext.recommendedDifficulty || participantContext.engagement;
   const topic = classContext.currentTopic || 'current lesson';
   const transcriptSnippet = classContext.recentTranscript || '';
+  
+  // If we have a knowledge graph, pass key concepts to Claude
+  const knowledgeContext = knowledgeGraph ? {
+    key_points: knowledgeGraph.key_points?.map(kp => ({
+      id: kp.id,
+      title: kp.title,
+      summary: kp.summary,
+      importance: kp.importance
+    })) || [],
+    associations: knowledgeGraph.associations || []
+  } : null;
   
   const system = `
 You are a quiz generator for a Zoom class.
 Generate 2-3 personalized questions for THIS SPECIFIC participant based on their engagement level.
 If difficulty=1 (low engagement), keep questions basic and encouraging.
 If difficulty=2-3, make questions more challenging.
-Focus on the recent topic/transcript provided.
+
+${knowledgeContext ? 'Use the knowledge graph to ensure questions target key concepts from the lecture.' : 'Focus on the recent topic/transcript provided.'}
 
 Return JSON:
 {
@@ -249,7 +261,7 @@ Return JSON:
   "topic": "...",
   "difficulty": 1|2|3,
   "questions": [
-    { "id": "q1", "type": "mcq", "question": "...", "options": ["..."], "correctIndex": 0 },
+    { "id": "q1", "type": "mcq", "question": "...", "options": ["..."], "correctIndex": 0, "linkedConcepts": ["kp1", "kp2"] },
     { "id": "q2", "type": "open", "question": "..." }
   ],
   "encouragement": "short encouraging message for this participant"
@@ -267,6 +279,7 @@ No additional explanations.
     difficulty,
     topic,
     transcriptSnippet,
+    knowledgeGraph: knowledgeContext
   });
 
   return await callClaudeJSON(system, user);
@@ -280,7 +293,7 @@ No additional explanations.
  * Execute the agent chain for a single participant:
  * nudgeAgent → quizPollAgent (if needed)
  */
-export async function executeParticipantChain(participantContext, classContext) {
+export async function executeParticipantChain(participantContext, classContext, knowledgeGraph = null) {
   const result = {
     userId: participantContext.userId,
     displayName: participantContext.displayName,
@@ -297,14 +310,14 @@ export async function executeParticipantChain(participantContext, classContext) 
       output: nudgeResult
     });
 
-    // Step 2: If nudge recommends quiz, generate personalized quiz
+    // Step 2: If nudge recommends quiz, generate personalized quiz (now with knowledge graph)
     if (nudgeResult.needsQuiz) {
       console.log(`[Chain] Running quizPollAgent for ${participantContext.displayName}`);
       const enrichedContext = {
         ...participantContext,
         recommendedDifficulty: nudgeResult.recommendedDifficulty
       };
-      const quizResult = await quizPollAgent(enrichedContext, classContext);
+      const quizResult = await quizPollAgent(enrichedContext, classContext, knowledgeGraph);
       result.actions.push({
         agent: 'quiz',
         output: quizResult
@@ -324,8 +337,9 @@ export async function executeParticipantChain(participantContext, classContext) 
 /**
  * Main orchestrator: Runs the entire multi-agent system
  * 1. engagementSummarizerAgent (analyzes all participants)
- * 2. Fan out: executeParticipantChain for each low-engagement participant
- * 3. Aggregate and return results
+ * 2. notesExtractorAgent (builds knowledge graph from transcript)
+ * 3. Fan out: executeParticipantChain for each low-engagement participant (now knowledge-aware)
+ * 4. Aggregate and return results with knowledge graph
  */
 export async function orchestrateEngagementSystem(meeting, options = {}) {
   console.log('[Orchestrator] Starting multi-agent engagement system...');
@@ -334,7 +348,7 @@ export async function orchestrateEngagementSystem(meeting, options = {}) {
     meetingId: meeting.meetingId,
     meetingType: options.meetingType || 'education',
     currentTopic: meeting.currentTopic || null,
-    recentTranscript: (meeting.recentTranscriptSnippets || []).join(' '),
+    recentTranscript: (meeting.recentTranscriptSnippets || []).map(s => s.text || s).join(' '),
     timestamp: Date.now()
   };
 
@@ -344,29 +358,47 @@ export async function orchestrateEngagementSystem(meeting, options = {}) {
   classContext.class_engagement = summary.class_engagement;
   classContext.summary = summary.summary;
 
-  // Step 2: Identify participants needing intervention
+  // Step 2: Extract knowledge graph from transcript
+  let knowledgeGraph = null;
+  const transcript = classContext.recentTranscript;
+  if (transcript && transcript.trim().length > 0) {
+    console.log('[Orchestrator] Running notesExtractorAgent to build knowledge graph...');
+    try {
+      knowledgeGraph = await notesExtractorAgent(transcript);
+      console.log(`[Orchestrator] Knowledge graph created with ${knowledgeGraph.key_points?.length || 0} key concepts`);
+    } catch (error) {
+      console.warn('[Orchestrator] Knowledge graph extraction failed:', error.message);
+      knowledgeGraph = null;
+    }
+  } else {
+    console.log('[Orchestrator] No transcript available for knowledge graph extraction');
+  }
+
+  // Step 3: Identify participants needing intervention
   const participantsNeedingHelp = summary.participantContexts.filter(
     p => p.needsAttention || p.engagement === 1
   );
 
   console.log(`[Orchestrator] Found ${participantsNeedingHelp.length} participants needing intervention`);
 
-  // Step 3: Execute parallel chains for each participant
+  // Step 4: Execute parallel chains for each participant (now with knowledge graph)
   const participantResults = await Promise.all(
     participantsNeedingHelp.map(participant => 
-      executeParticipantChain(participant, classContext)
+      executeParticipantChain(participant, classContext, knowledgeGraph)
     )
   );
 
-  // Step 4: Aggregate results
+  // Step 5: Aggregate results
   const aggregatedResults = {
     timestamp: classContext.timestamp,
     meetingId: meeting.meetingId,
+    knowledgeGraph: knowledgeGraph || null,
     summary: {
       classEngagement: summary.class_engagement,
       totalParticipants: summary.participantContexts.length,
       participantsNeedingHelp: participantsNeedingHelp.length,
-      classSummary: summary.summary
+      classSummary: summary.summary,
+      topicsCovered: knowledgeGraph?.key_points?.map(kp => kp.title) || []
     },
     interventions: participantResults,
     // Convenience accessors
@@ -382,6 +414,115 @@ export async function orchestrateEngagementSystem(meeting, options = {}) {
 
   console.log('[Orchestrator] Multi-agent system complete');
   console.log(`[Orchestrator] Generated ${aggregatedResults.nudges.length} nudges, ${aggregatedResults.quizzes.length} quizzes`);
+  if (knowledgeGraph) {
+    console.log(`[Orchestrator] Knowledge graph: ${knowledgeGraph.key_points?.length || 0} concepts, ${knowledgeGraph.associations?.length || 0} relationships`);
+  }
 
   return aggregatedResults;
+}
+
+// Helper: Generate follow-up questions from knowledge graph (for additional practice/review)
+export async function generateFollowUpQuestionsFromGraph(knowledgeGraph, topic = '', difficulty = 2) {
+  if (!knowledgeGraph || !knowledgeGraph.key_points || knowledgeGraph.key_points.length === 0) {
+    return null;
+  }
+
+  const system = `
+You are a quiz generator creating follow-up questions based on a knowledge graph.
+Generate 3-5 questions that:
+1. Cover different key_points from the graph
+2. Test understanding of the associations/relationships
+3. Match the difficulty level (1=basic, 2=intermediate, 3=advanced)
+
+Return JSON:
+{
+  "topic": "string",
+  "difficulty": 1|2|3,
+  "questions": [
+    { "id": "q1", "type": "mcq", "question": "...", "options": ["..."], "correctIndex": 0, "relatedConcepts": ["kp1", "kp2"] },
+    { "id": "q2", "type": "open", "question": "...", "expectedKeywords": ["keyword1", "keyword2"] }
+  ],
+  "summary": "What these questions assess"
+}
+`;
+
+  const user = JSON.stringify({
+    knowledgeGraph,
+    topic,
+    difficulty
+  });
+
+  return await callClaudeJSON(system, user);
+}
+
+// agent 4: notes extractor - converts transcripts into associated notes with key points
+export async function notesExtractorAgent(transcript, userConversation = "") {
+  const system = `
+You are an intelligent notes extraction system for educational meetings.
+Your task: Convert a meeting transcript and user conversation into structured notes with associated knowledge nodes.
+
+Create a knowledge graph where:
+1. "key_points" are main concepts/topics discussed (nodes)
+2. "associations" show how different points connect to each other
+3. "details" are supporting information for each key point
+
+Return STRICT JSON format:
+{
+  "title": "Meeting Summary",
+  "key_points": [
+    {
+      "id": "kp1",
+      "title": "Concept Name",
+      "summary": "Brief 1-2 sentence summary",
+      "details": ["detail 1", "detail 2"],
+      "importance": "high" | "medium" | "low",
+      "timestamp": "HH:MM:SS or null"
+    }
+  ],
+  "associations": [
+    {
+      "from_id": "kp1",
+      "to_id": "kp2",
+      "relationship_type": "prerequisite" | "related" | "contradicts" | "example_of" | "expands_on",
+      "description": "How they connect"
+    }
+  ],
+  "summary": "Overall meeting summary",
+  "tags": ["topic1", "topic2"]
+}
+
+Guidelines:
+- Limit to 5-8 key points per meeting
+- Identify diverse relationships between concepts
+- Mark important concepts as "high" importance
+- Focus on educational value and knowledge retention
+- Extract timestamp if available from transcript
+`;
+
+  const user = JSON.stringify({
+    transcript,
+    user_conversation: userConversation,
+  });
+
+  return await callClaudeJSON(system, user, 2048);
+}
+
+// agent 5: agent-to-notes conversation handler
+export async function agentNotesChatAgent(userQuery, currentNotes) {
+  const system = `
+You are a note-taking assistant that helps users refine and expand meeting notes.
+Given the current notes structure and a user query, provide updated notes or suggestions.
+Keep the same JSON structure but update relevant fields.
+If user asks to add a concept, create a new key_point.
+If user asks to connect ideas, add new associations.
+
+Return the updated notes JSON or a helpful response if clarifying is needed.
+`;
+
+  const user = JSON.stringify({
+    query: userQuery,
+    current_notes: currentNotes,
+  });
+
+  return await callClaudeJSON(system, user);
 }

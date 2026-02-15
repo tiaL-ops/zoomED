@@ -317,6 +317,57 @@ app.post('/api/orchestrate', async (req, res) => {
     meeting.lastOrchestrationResult = result;
     meeting.lastSummary = result.summary;
     
+    // STORE CLASS-LEVEL KNOWLEDGE GRAPH (NEW)
+    if (result.knowledgeGraph) {
+      meeting.knowledgeGraph = result.knowledgeGraph;
+      console.log(`[Orchestrate] Knowledge graph stored with ${result.knowledgeGraph.key_points?.length || 0} concepts`);
+    }
+    
+    // STORE PER-PARTICIPANT KNOWLEDGE PROGRESS (NEW)
+    if (!meeting.participantKnowledgeProgress) {
+      meeting.participantKnowledgeProgress = {};
+    }
+    
+    // For each participant who got quizzes, track which concepts they were tested on
+    for (const intervention of result.interventions) {
+      const userId = intervention.userId;
+      if (!meeting.participantKnowledgeProgress[userId]) {
+        meeting.participantKnowledgeProgress[userId] = {
+          userId: userId,
+          displayName: intervention.displayName,
+          masteredConcepts: [],      // Concepts they got right
+          strugglingConcepts: [],    // Concepts they got wrong
+          encounteredConcepts: [],   // All concepts seen in quizzes
+          quizHistory: [],
+          lastUpdated: Date.now()
+        };
+      }
+      
+      // Track quiz responses
+      const quizAction = intervention.actions?.find(a => a.agent === 'quiz');
+      if (quizAction?.output) {
+        const quiz = quizAction.output;
+        const quizEntry = {
+          timestamp: Date.now(),
+          topic: quiz.topic,
+          difficulty: quiz.difficulty,
+          questions: quiz.questions?.map(q => ({
+            id: q.id,
+            linkedConcepts: q.linkedConcepts || []
+          })) || []
+        };
+        meeting.participantKnowledgeProgress[userId].quizHistory.push(quizEntry);
+        
+        // Flatten concepts they were tested on
+        const conceptsInThisQuiz = quiz.questions?.flatMap(q => q.linkedConcepts || []) || [];
+        meeting.participantKnowledgeProgress[userId].encounteredConcepts = [
+          ...new Set([...meeting.participantKnowledgeProgress[userId].encounteredConcepts, ...conceptsInThisQuiz])
+        ];
+      }
+      
+      meeting.participantKnowledgeProgress[userId].lastUpdated = Date.now();
+    }
+    
     // Broadcast nudges to clients
     for (const nudge of result.nudges) {
       if (canNudgeUser(meetingId, nudge.userId)) {
@@ -376,6 +427,145 @@ app.get('/api/report', (req, res) => {
     // Nudges omitted from teacher report to give students leeway; only question/poll escalation is shown
   };
   res.json(report);
+});
+
+// ----- GET CLASS-LEVEL KNOWLEDGE GRAPH -----
+app.get('/api/knowledge-graph/:meetingId', (req, res) => {
+  const { meetingId } = req.params;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'meeting not found' });
+  
+  if (!meeting.knowledgeGraph) {
+    return res.status(404).json({ error: 'no knowledge graph for this meeting yet' });
+  }
+  
+  res.json({
+    meetingId,
+    knowledgeGraph: meeting.knowledgeGraph,
+    generatedAt: meeting.knowledgeGraph.timestamp || Date.now()
+  });
+});
+
+// ----- GET PER-PARTICIPANT KNOWLEDGE PROGRESS -----
+app.get('/api/knowledge-graph/:meetingId/:userId', (req, res) => {
+  const { meetingId, userId } = req.params;
+  if (!meetingId || !userId) return res.status(400).json({ error: 'missing meetingId or userId' });
+  
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'meeting not found' });
+  
+  const progress = meeting.participantKnowledgeProgress?.[userId];
+  if (!progress) {
+    return res.status(404).json({ error: 'no knowledge progress for this participant yet' });
+  }
+  
+  // Enrich with class-level graph for context
+  const enrichedProgress = {
+    ...progress,
+    classKnowledgeGraph: meeting.knowledgeGraph || null,
+    // Map concepts to their definitions from the class graph
+    conceptDetails: (meeting.knowledgeGraph?.key_points || [])
+      .filter(kp => progress.encounteredConcepts.includes(kp.id))
+      .map(kp => ({
+        id: kp.id,
+        title: kp.title,
+        summary: kp.summary,
+        importance: kp.importance,
+        mastered: progress.masteredConcepts.includes(kp.id),
+        struggling: progress.strugglingConcepts.includes(kp.id)
+      }))
+  };
+  
+  res.json(enrichedProgress);
+});
+
+// ----- UPDATE PARTICIPANT CONCEPT MASTERY -----
+app.post('/api/knowledge-graph/:meetingId/:userId/update-mastery', (req, res) => {
+  const { meetingId, userId } = req.params;
+  const { conceptId, mastered } = req.body;
+  
+  if (!meetingId || !userId || !conceptId) {
+    return res.status(400).json({ error: 'missing meetingId, userId, or conceptId' });
+  }
+  
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'meeting not found' });
+  
+  if (!meeting.participantKnowledgeProgress) {
+    meeting.participantKnowledgeProgress = {};
+  }
+  
+  if (!meeting.participantKnowledgeProgress[userId]) {
+    meeting.participantKnowledgeProgress[userId] = {
+      userId,
+      displayName: 'Unknown',
+      masteredConcepts: [],
+      strugglingConcepts: [],
+      encounteredConcepts: [],
+      quizHistory: [],
+      lastUpdated: Date.now()
+    };
+  }
+  
+  const progress = meeting.participantKnowledgeProgress[userId];
+  
+  if (mastered) {
+    // Add to mastered, remove from struggling
+    if (!progress.masteredConcepts.includes(conceptId)) {
+      progress.masteredConcepts.push(conceptId);
+    }
+    progress.strugglingConcepts = progress.strugglingConcepts.filter(c => c !== conceptId);
+  } else {
+    // Add to struggling, remove from mastered
+    if (!progress.strugglingConcepts.includes(conceptId)) {
+      progress.strugglingConcepts.push(conceptId);
+    }
+    progress.masteredConcepts = progress.masteredConcepts.filter(c => c !== conceptId);
+  }
+  
+  progress.lastUpdated = Date.now();
+  
+  res.json({
+    success: true,
+    userId,
+    conceptId,
+    mastered,
+    progress: {
+      masteredCount: progress.masteredConcepts.length,
+      strugglingCount: progress.strugglingConcepts.length,
+      encounteredCount: progress.encounteredConcepts.length
+    }
+  });
+});
+
+// ----- GET ALL PARTICIPANTS' KNOWLEDGE PROGRESS FOR MEETING -----
+app.get('/api/knowledge-graph/:meetingId/participants/all', (req, res) => {
+  const { meetingId } = req.params;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'meeting not found' });
+  
+  const allProgress = meeting.participantKnowledgeProgress || {};
+  
+  const summary = {
+    meetingId,
+    totalParticipants: Object.keys(allProgress).length,
+    classKnowledgeGraph: meeting.knowledgeGraph || null,
+    participants: Object.values(allProgress).map(p => ({
+      userId: p.userId,
+      displayName: p.displayName,
+      masteredConceptsCount: p.masteredConcepts.length,
+      strugglingConceptsCount: p.strugglingConcepts.length,
+      totalConceptsEncountered: p.encounteredConcepts.length,
+      quizzesAttempted: p.quizHistory.length,
+      lastUpdated: p.lastUpdated
+    }))
+  };
+  
+  res.json(summary);
 });
 
 // ----- Poll: from summary.txt (demo) or from live meeting if meetingId provided -----

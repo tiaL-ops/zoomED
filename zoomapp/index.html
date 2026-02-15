@@ -149,6 +149,12 @@
         .engagement-sidebar .btn-primary { background: #0b65c2; color: #fff; }
         .engagement-sidebar .btn-secondary { background: #25282c; color: #e4e6eb; }
         .engagement-sidebar .btn-small { padding: 6px 10px; font-size: 12px; }
+        .engagement-sidebar .panel-summary { margin: 0 0 12px 0; font-size: 13px; color: #8a8d91; }
+        .engagement-sidebar .collapse-btn { display: flex; align-items: center; justify-content: center; }
+        .engagement-sidebar .sidebar-questions-section { margin-top: 4px; }
+        .engagement-sidebar .sidebar-questions-content .poll-question { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
+        .engagement-sidebar .sidebar-questions-content .poll-question:last-child { border-bottom: none; }
+        .engagement-sidebar .sidebar-questions-content .poll-options-list { margin: 6px 0 0 0; padding-left: 18px; }
         #eye-overlay {
             position: fixed;
             top: 0;
@@ -408,8 +414,22 @@
     </style>
 </head>
 <body>
-    <div id="zmmtg-root"></div>
-    
+    <div class="meeting-layout" id="meeting-layout">
+        <div class="meeting-main">
+            <div id="zmmtg-root"></div>
+        </div>
+        <div class="engagement-sidebar" id="engagement-sidebar" aria-label="Engagement panel">
+            <button type="button" class="collapse-btn" id="sidebar-collapse-btn" aria-label="Collapse panel" title="Collapse panel">«</button>
+            <div class="engagement-content">
+                <h2>Questions</h2>
+                <div class="section sidebar-questions-section">
+                    <p class="panel-summary" id="sidebar-questions-empty">No questions yet. When you look away 3 times, the agent will prompt you with a question on the material here.</p>
+                    <div id="sidebar-questions-content" class="sidebar-questions-content"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <video id="eye-video" playsinline></video>
     <canvas id="eye-overlay"></canvas>
     <div id="focus-tracking-opt-in" aria-label="Focus tracking opt-in" role="dialog" aria-modal="true">
@@ -430,8 +450,8 @@
     <a id="open-report-link" href="#" target="_blank" rel="noopener noreferrer">Teacher: Open Report</a>
     <div id="focus-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="focus-popup-title">
         <div id="focus-popup">
-            <h2 id="focus-popup-title">Claude: Quick focus check</h2>
-            <p>Looks like your attention drifted. Want a 20-second focus game?</p>
+            <h2 id="focus-popup-title">Nudge</h2>
+            <p>Looks like your attention drifted.</p>
             <div class="popup-actions">
                 <button id="focus-game-btn" type="button">Open focus game</button>
                 <button id="focus-close-btn" type="button">I am back</button>
@@ -440,7 +460,7 @@
     </div>
     <div id="poll-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="poll-popup-title">
         <div id="poll-popup">
-            <h2 id="poll-popup-title">Quick check question</h2>
+            <h2 id="poll-popup-title">Agent question (on material)</h2>
             <div id="poll-popup-content"></div>
             <button type="button" id="poll-popup-close-btn">Got it</button>
         </div>

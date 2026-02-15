@@ -290,6 +290,76 @@ app.post('/api/nudge-timeout', async (req, res) => {
   }
 });
 
+// Sample material for question agent when meeting has no content (for testing)
+let sampleMaterialCache = null;
+async function getSampleMaterial() {
+  if (sampleMaterialCache) return sampleMaterialCache;
+  try {
+    const summaryPath = path.join(__dirname, 'summary.txt');
+    sampleMaterialCache = await fs.readFile(summaryPath, 'utf-8');
+  } catch {
+    sampleMaterialCache = [
+      'Topic: Work and Energy (AP Physics).',
+      'Work is force times displacement: W = F d cos(θ). No displacement means no work.',
+      'Kinetic energy is KE = (1/2)mv². Doubling speed quadruples kinetic energy.',
+      'Work-Energy Theorem: net work equals change in kinetic energy, W_net = ΔKE.',
+      'Units: work and energy in Joules (J).',
+    ].join(' ');
+  }
+  return sampleMaterialCache;
+}
+
+// ----- Look away 3+ times: client calls this to pop sidebar and get material quiz from agent -----
+app.post('/api/meetings/:meetingId/trigger-material-quiz', async (req, res) => {
+  const meetingId = req.params.meetingId;
+  const { userId, displayName } = req.body || {};
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  let meeting = meetingState[meetingId];
+  if (!meeting) {
+    meeting = { events: [], recentTranscriptSnippets: [] };
+    meetingState[meetingId] = meeting;
+  }
+  let summary = meeting.lastSummary;
+  try {
+    if (!summary) {
+      summary = await engagementSummarizerAgent(meeting);
+      meeting.lastSummary = summary;
+    }
+  } catch (e) {
+    console.warn('Summarizer failed:', e.message);
+    summary = { summary: '', class_engagement: 2 };
+  }
+  const participantContext = {
+    userId: userId || 'unknown',
+    displayName: displayName || 'Student',
+    engagement: 1,
+    recommendedDifficulty: 1,
+    signals: {},
+  };
+  let materialSnippet = (summary && summary.summary) ? String(summary.summary).trim() : '';
+  if (!materialSnippet) {
+    materialSnippet = await getSampleMaterial();
+  }
+  const classContext = {
+    currentTopic: 'material covered in class',
+    recentTranscript: materialSnippet,
+  };
+  try {
+    const result = await quizPollAgent(participantContext, classContext);
+    const poll = result && result.questions && result.questions.length > 0
+      ? { questions: result.questions }
+      : { questions: [] };
+    broadcast(meetingId, {
+      type: 'POLL_SUGGESTION',
+      payload: { poll, reason: 'Look-away material quiz', summary },
+    });
+    res.json({ poll });
+  } catch (err) {
+    console.error('Quiz poll agent error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ----- Report for teacher: latest summary, time-based engagement, recent nudges -----
 app.get('/api/report', (req, res) => {
   const { meetingId } = req.query;

@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: zoom-demeanor-evaluator-node
+    env: node
+    plan: free
+    rootDir: zoom-demeanor-evaluator-node
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    autoDeploy: true

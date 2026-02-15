@@ -72,7 +72,6 @@ export async function engagementSummarizerAgent(meeting) {
         polls_answered: 0,
         polls_missed: 0,
         chat_messages: 0,
-        game_interactions: 0,
         avg_response_latency_ms: 0,
         cv_attention_score: e.cv_attention_score ?? null,
         video_on: e.video_on ?? true,
@@ -103,7 +102,7 @@ export async function engagementSummarizerAgent(meeting) {
 
   const system = `
 You are an engagement summarizer for a live Zoom class.
-You ONLY analyze engagement signals (polls, chat, game interactions, attention scores).
+You ONLY analyze engagement signals (polls, chat, attention scores).
 For each user, assign engagement 1 (low), 2 (medium), or 3 (high).
 Return STRICT JSON:
 {

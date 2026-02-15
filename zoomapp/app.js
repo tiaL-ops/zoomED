@@ -3,6 +3,11 @@ ZoomMtg.setZoomJSLib("https://source.zoom.us/3.8.10/lib", "/av");
 ZoomMtg.preLoadWasm();
 ZoomMtg.prepareWebSDK();
 
+import { setupLiveCaptionListener } from './CAPTION_INTEGRATION.js';
+
+// During app initialization:
+setupLiveCaptionListener();
+
 // Auth endpoint (runs on port 4000)
 const authEndpoint = "http://localhost:4000";
 const leaveUrl = window.location.origin;
@@ -14,7 +19,6 @@ let meetingWs = null;
 const FOCUS_POPUP_COOLDOWN_MS = 7000;   // 7 sec between popups (was 12)
 const UNFOCUSED_TRIGGER_MS = 1500;      // 1.5 sec looking away to trigger (was 2)
 const NUDGE_POPUP_AUTO_QUESTION_MS = 18000;  // 18 sec: if user doesn't pick, trigger question agent
-const FOCUS_GAME_URL = "http://localhost:5173/videoapp";
 const SERVER_WS_PORT = 3000;
 const ATTENTION_POST_INTERVAL_MS = 5000;  // throttle attention events to server
 let currentMeetingId = null;

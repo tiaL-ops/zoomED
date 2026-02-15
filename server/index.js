@@ -215,6 +215,77 @@ app.post('/api/events', (req, res) => {
   res.json({ ok: true });
 });
 
+// ----- Ingest Zoom live captions/transcripts (real-time) -----
+app.post('/api/transcript', (req, res) => {
+  const { meetingId, userId, displayName, text, timestamp, topic } = req.body;
+  
+  if (!meetingId || !text) {
+    return res.status(400).json({ error: 'missing meetingId or text' });
+  }
+  
+  // Initialize meeting state if needed
+  meetingState[meetingId] = meetingState[meetingId] || { 
+    events: [], 
+    recentTranscriptSnippets: [],
+    currentTopic: null
+  };
+  
+  // Update topic if provided
+  if (topic) {
+    meetingState[meetingId].currentTopic = topic;
+  }
+  
+  const snippet = {
+    userId: userId || 'instructor',
+    displayName: displayName || 'Instructor',
+    text: text,
+    timestamp: timestamp || Date.now()
+  };
+  
+  meetingState[meetingId].recentTranscriptSnippets.push(snippet);
+  
+  // Keep only last 100 snippets for memory efficiency
+  const MAX_TRANSCRIPTS = 100;
+  if (meetingState[meetingId].recentTranscriptSnippets.length > MAX_TRANSCRIPTS) {
+    meetingState[meetingId].recentTranscriptSnippets = 
+      meetingState[meetingId].recentTranscriptSnippets.slice(-MAX_TRANSCRIPTS);
+  }
+  
+  // Broadcast transcript to all connected clients
+  broadcast(meetingId, { 
+    type: 'TRANSCRIPT', 
+    payload: snippet 
+  });
+  
+  res.json({ ok: true, snippetCount: meetingState[meetingId].recentTranscriptSnippets.length, topic: meetingState[meetingId].currentTopic });
+});
+
+// ----- Set current lesson topic -----
+app.post('/api/topic', (req, res) => {
+  const { meetingId, topic } = req.body;
+  
+  if (!meetingId || !topic) {
+    return res.status(400).json({ error: 'missing meetingId or topic' });
+  }
+  
+  meetingState[meetingId] = meetingState[meetingId] || { 
+    events: [], 
+    recentTranscriptSnippets: []
+  };
+  
+  meetingState[meetingId].currentTopic = topic;
+  
+  console.log(`[Topic] Meeting ${meetingId} topic set to: ${topic}`);
+  
+  // Broadcast topic update to clients
+  broadcast(meetingId, { 
+    type: 'TOPIC_UPDATE', 
+    payload: { topic } 
+  });
+  
+  res.json({ ok: true, topic, meetingId });
+});
+
 // ----- Manual trigger: run agents once (e.g. from instructor UI) -----
 app.post('/api/tick', async (req, res) => {
   const { meetingId } = req.body;

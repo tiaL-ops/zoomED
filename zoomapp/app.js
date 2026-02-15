@@ -6,6 +6,18 @@ ZoomMtg.prepareWebSDK();
 // Auth endpoint (runs on port 4000)
 const authEndpoint = "http://localhost:4000";
 const leaveUrl = window.location.origin;
+let eyeTracker = null;
+let lastAttentionLogMs = 0;
+let unfocusedSinceMs = null;
+let lastFocusPopupMs = 0;
+let meetingWs = null;
+const FOCUS_POPUP_COOLDOWN_MS = 12000;  // 12 sec between popups (was 30)
+const UNFOCUSED_TRIGGER_MS = 2000;      // 2 sec looking away to trigger (was 3)
+const NUDGE_POPUP_AUTO_QUESTION_MS = 18000;  // 18 sec: if user doesn't pick, trigger question agent
+const FOCUS_GAME_URL = "http://localhost:5173/videoapp";
+const SERVER_WS_PORT = 3000;
+let currentMeetingId = null;
+let nudgePopupTimeoutId = null;
 
 function showError(message) {
   const errorDiv = document.getElementById("error-message");
@@ -13,6 +25,498 @@ function showError(message) {
   setTimeout(() => {
     errorDiv.textContent = "";
   }, 5000);
+}
+
+function connectMeetingWebSocket(meetingNumber) {
+  if (meetingWs && meetingWs.readyState === WebSocket.OPEN) return;
+  const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+  const host = location.hostname || "localhost";
+  const url = scheme + "//" + host + ":" + SERVER_WS_PORT + "/ws?meetingId=" + encodeURIComponent(String(meetingNumber));
+  try {
+    meetingWs = new WebSocket(url);
+    meetingWs.onmessage = function (event) {
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg.type === "POLL_SUGGESTION" && msg.payload && msg.payload.poll) {
+          showPollPopup(msg.payload.poll);
+        }
+      } catch (e) {}
+    };
+    meetingWs.onclose = function () {
+      meetingWs = null;
+    };
+  } catch (e) {
+    console.warn("Meeting WebSocket failed:", e);
+  }
+}
+
+function closeMeetingWebSocket() {
+  if (meetingWs) {
+    try {
+      meetingWs.close();
+    } catch (e) {}
+    meetingWs = null;
+  }
+}
+
+function escapeHtml(s) {
+  if (s == null) return "";
+  var div = document.createElement("div");
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+function showPollPopup(poll) {
+  const overlay = document.getElementById("poll-popup-overlay");
+  const content = document.getElementById("poll-popup-content");
+  if (!overlay || !content) return;
+  const questions = poll.questions || [];
+  content.innerHTML = questions
+    .map(
+      function (q) {
+        var opts = (q.options || []).map(function (o) {
+          return "<li>" + escapeHtml(o) + "</li>";
+        }).join("");
+        return (
+          '<div class="poll-question">' +
+          "<strong>" + escapeHtml(q.question) + "</strong>" +
+          (opts ? "<ul style=\"margin:0;padding-left:20px;\">" + opts + "</ul>" : "") +
+          "</div>"
+        );
+      }
+    )
+    .join("");
+  overlay.classList.add("active");
+}
+
+function hidePollPopup() {
+  const overlay = document.getElementById("poll-popup-overlay");
+  if (overlay) overlay.classList.remove("active");
+}
+
+function getLandmarkCenter(landmarks, indices) {
+  if (!landmarks || !indices || indices.length === 0) {
+    return null;
+  }
+
+  let sumX = 0;
+  let sumY = 0;
+  for (const index of indices) {
+    const point = landmarks[index];
+    if (!point) {
+      return null;
+    }
+    sumX += point.x;
+    sumY += point.y;
+  }
+
+  return {
+    x: sumX / indices.length,
+    y: sumY / indices.length,
+  };
+}
+
+function drawPoint(ctx, point, color) {
+  if (!ctx || !point) {
+    return;
+  }
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function getEyeOpenness(landmarks, indices) {
+  if (!landmarks || !indices || indices.length < 6) {
+    return null;
+  }
+  const [p1, p2, p3, p4, p5, p6] = indices.map((index) => landmarks[index]);
+  if (!p1 || !p2 || !p3 || !p4 || !p5 || !p6) {
+    return null;
+  }
+
+  const verticalA = Math.hypot(p2.x - p6.x, p2.y - p6.y);
+  const verticalB = Math.hypot(p3.x - p5.x, p3.y - p5.y);
+  const horizontal = Math.hypot(p1.x - p4.x, p1.y - p4.y);
+  if (!horizontal) {
+    return null;
+  }
+
+  return (verticalA + verticalB) / (2 * horizontal);
+}
+
+function getIrisHorizontalRatio(landmarks, iris, outerIndex, innerIndex) {
+  if (!landmarks || !iris) {
+    return null;
+  }
+  const outer = landmarks[outerIndex];
+  const inner = landmarks[innerIndex];
+  if (!outer || !inner) {
+    return null;
+  }
+  const span = inner.x - outer.x;
+  if (!span) {
+    return null;
+  }
+  return (iris.x - outer.x) / span;
+}
+
+function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) {
+  const now = Date.now();
+  if (now - lastAttentionLogMs < 400) {
+    return;
+  }
+  lastAttentionLogMs = now;
+
+  const leftEAR = getEyeOpenness(landmarks, [33, 160, 158, 133, 153, 144]);
+  const rightEAR = getEyeOpenness(landmarks, [362, 385, 387, 263, 373, 380]);
+  if (leftEAR === null || rightEAR === null || !gazePointNormalized) {
+    return;
+  }
+
+  const avgEAR = (leftEAR + rightEAR) / 2;
+  const eyesClosed = avgEAR < 0.18;
+  // Tighter "focused" band so looking slightly away triggers refocus sooner
+  const gazeCentered =
+    gazePointNormalized.x > 0.42 &&
+    gazePointNormalized.x < 0.58 &&
+    gazePointNormalized.y > 0.38 &&
+    gazePointNormalized.y < 0.62;
+
+  const leftIrisRatio = getIrisHorizontalRatio(landmarks, leftIris, 33, 133);
+  const rightIrisRatio = getIrisHorizontalRatio(landmarks, rightIris, 362, 263);
+  const irisCentered =
+    leftIrisRatio !== null &&
+    rightIrisRatio !== null &&
+    leftIrisRatio > 0.38 &&
+    leftIrisRatio < 0.62 &&
+    rightIrisRatio > 0.38 &&
+    rightIrisRatio < 0.62;
+
+  let state = "distracted";
+  if (eyesClosed) {
+    state = "bored";
+  } else if (gazeCentered && irisCentered) {
+    state = "focused";
+  }
+
+  console.log("Attention:", {
+    state,
+    eyeOpenness: Number(avgEAR.toFixed(3)),
+    gaze: {
+      x: Number(gazePointNormalized.x.toFixed(3)),
+      y: Number(gazePointNormalized.y.toFixed(3)),
+    },
+    iris: {
+      left: leftIrisRatio === null ? null : Number(leftIrisRatio.toFixed(3)),
+      right: rightIrisRatio === null ? null : Number(rightIrisRatio.toFixed(3)),
+    },
+  });
+
+  updateFocusPopup(state);
+}
+
+function getFocusPopupElements() {
+  return {
+    overlay: document.getElementById("focus-popup-overlay"),
+    gameButton: document.getElementById("focus-game-btn"),
+    closeButton: document.getElementById("focus-close-btn"),
+  };
+}
+
+function clearNudgePopupTimeout() {
+  if (nudgePopupTimeoutId) {
+    clearTimeout(nudgePopupTimeoutId);
+    nudgePopupTimeoutId = null;
+  }
+}
+
+function showFocusPopup() {
+  const { overlay } = getFocusPopupElements();
+  if (!overlay) {
+    return;
+  }
+  overlay.classList.add("active");
+  clearNudgePopupTimeout();
+  nudgePopupTimeoutId = setTimeout(function () {
+    nudgePopupTimeoutId = null;
+    hideFocusPopup();
+    unfocusedSinceMs = Date.now();
+    if (currentMeetingId) {
+      var scheme = location.protocol === "https:" ? "https:" : "http:";
+      var host = location.hostname || "localhost";
+      fetch(scheme + "//" + host + ":" + SERVER_WS_PORT + "/api/nudge-timeout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingId: currentMeetingId }),
+      }).catch(function () {});
+    }
+  }, NUDGE_POPUP_AUTO_QUESTION_MS);
+}
+
+function hideFocusPopup() {
+  clearNudgePopupTimeout();
+  const { overlay } = getFocusPopupElements();
+  if (!overlay) {
+    return;
+  }
+  overlay.classList.remove("active");
+}
+
+function updateFocusPopup(state) {
+  const now = Date.now();
+  // Do not auto-hide popup when user looks back; they must choose "I am back" or "Open focus game"
+  if (state === "focused") {
+    unfocusedSinceMs = null;
+    return;
+  }
+
+  if (state !== "bored" && state !== "distracted") {
+    return;
+  }
+
+  if (!unfocusedSinceMs) {
+    unfocusedSinceMs = now;
+  }
+
+  const unfocusedDuration = now - unfocusedSinceMs;
+  const canShow = now - lastFocusPopupMs > FOCUS_POPUP_COOLDOWN_MS;
+  if (unfocusedDuration >= UNFOCUSED_TRIGGER_MS && canShow) {
+    lastFocusPopupMs = now;
+    showFocusPopup();
+  }
+}
+
+function startEyeTracking() {
+  if (eyeTracker || !window.FaceMesh || !window.Camera) {
+    return;
+  }
+
+  const video = document.getElementById("eye-video");
+  const canvas = document.getElementById("eye-overlay");
+  if (!video || !canvas) {
+    return;
+  }
+
+  const ctx = canvas.getContext("2d");
+  const resizeCanvas = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  };
+  resizeCanvas();
+  window.addEventListener("resize", resizeCanvas);
+
+  const faceMesh = new FaceMesh({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`,
+  });
+  faceMesh.setOptions({
+    maxNumFaces: 1,
+    refineLandmarks: true,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5,
+  });
+
+  faceMesh.onResults((results) => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const landmarks = results.multiFaceLandmarks && results.multiFaceLandmarks[0];
+    if (!landmarks) {
+      return;
+    }
+
+    const leftIris = getLandmarkCenter(landmarks, [468, 469, 470, 471, 472]);
+    const rightIris = getLandmarkCenter(landmarks, [473, 474, 475, 476, 477]);
+    if (!leftIris || !rightIris) {
+      return;
+    }
+
+    const gaze = {
+      x: (leftIris.x + rightIris.x) / 2,
+      y: (leftIris.y + rightIris.y) / 2,
+    };
+
+    const leftPoint = {
+      x: leftIris.x * canvas.width,
+      y: leftIris.y * canvas.height,
+    };
+    const rightPoint = {
+      x: rightIris.x * canvas.width,
+      y: rightIris.y * canvas.height,
+    };
+    const gazePoint = {
+      x: gaze.x * canvas.width,
+      y: gaze.y * canvas.height,
+    };
+
+    // Do not draw gaze dots on screen (privacy; not visible to students)
+    logAttentionState(landmarks, gaze, leftIris, rightIris);
+  });
+
+  const camera = new Camera(video, {
+    onFrame: async () => {
+      await faceMesh.send({ image: video });
+    },
+    width: 640,
+    height: 480,
+  });
+
+  const startResult = camera.start();
+  if (startResult && typeof startResult.catch === "function") {
+    startResult.catch((error) => {
+      console.warn("Eye tracking camera error:", error);
+    });
+  }
+
+  eyeTracker = {
+    stop: () => {
+      camera.stop();
+      window.removeEventListener("resize", resizeCanvas);
+    },
+  };
+
+  const { gameButton, closeButton, overlay } = getFocusPopupElements();
+  if (gameButton && !gameButton.dataset.bound) {
+    gameButton.addEventListener("click", () => {
+      clearNudgePopupTimeout();
+      window.alert("To do: implement game");
+      hideFocusPopup();
+      unfocusedSinceMs = Date.now();
+    });
+    gameButton.dataset.bound = "true";
+  }
+  if (closeButton && !closeButton.dataset.bound) {
+    closeButton.addEventListener("click", () => {
+      clearNudgePopupTimeout();
+      hideFocusPopup();
+      unfocusedSinceMs = Date.now();
+    });
+    closeButton.dataset.bound = "true";
+  }
+  if (overlay && !overlay.dataset.bound) {
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        clearNudgePopupTimeout();
+        hideFocusPopup();
+        unfocusedSinceMs = Date.now();
+      }
+    });
+    overlay.dataset.bound = "true";
+  }
+}
+
+function stopEyeTracking() {
+  if (!eyeTracker) {
+    return;
+  }
+  try {
+    eyeTracker.stop();
+  } finally {
+    eyeTracker = null;
+  }
+  unfocusedSinceMs = null;
+  clearNudgePopupTimeout();
+  hideFocusPopup();
+  const canvas = document.getElementById("eye-overlay");
+  if (canvas) {
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+  }
+  updateFocusTrackingUI();
+}
+
+function getFocusTrackingOptIn() {
+  return document.getElementById("focus-tracking-opt-in");
+}
+
+function getFocusTrackingOnBar() {
+  return document.getElementById("focus-tracking-on-bar");
+}
+
+function showFocusTrackingOptIn() {
+  const el = getFocusTrackingOptIn();
+  if (el) el.classList.remove("hidden");
+}
+
+function hideFocusTrackingOptIn() {
+  const el = getFocusTrackingOptIn();
+  if (el) el.classList.add("hidden");
+}
+
+function showFocusTrackingOnBar() {
+  const el = getFocusTrackingOnBar();
+  if (el) el.classList.add("visible");
+}
+
+function hideFocusTrackingOnBar() {
+  const el = getFocusTrackingOnBar();
+  if (el) el.classList.remove("visible");
+}
+
+function getFocusTrackingReopenBtn() {
+  return document.getElementById("focus-tracking-reopen-btn");
+}
+
+function showReopenButton() {
+  const el = getFocusTrackingReopenBtn();
+  if (el) el.classList.add("visible");
+}
+
+function hideReopenButton() {
+  const el = getFocusTrackingReopenBtn();
+  if (el) el.classList.remove("visible");
+}
+
+function updateFocusTrackingUI() {
+  if (eyeTracker) {
+    hideFocusTrackingOptIn();
+    showFocusTrackingOnBar();
+    hideReopenButton();
+  } else {
+    hideFocusTrackingOnBar();
+    showFocusTrackingOptIn();
+  }
+}
+
+function bindFocusTrackingButton() {
+  const enableBtn = document.getElementById("enable-focus-tracking-btn");
+  const notNowBtn = document.getElementById("focus-tracking-not-now-btn");
+  const turnOffBtn = document.getElementById("focus-tracking-turn-off-btn");
+
+  if (enableBtn && !enableBtn.dataset.bound) {
+    enableBtn.addEventListener("click", () => {
+      startEyeTracking();
+      hideFocusTrackingOptIn();
+      showFocusTrackingOnBar();
+      hideReopenButton();
+    });
+    enableBtn.dataset.bound = "true";
+  }
+  if (notNowBtn && !notNowBtn.dataset.bound) {
+    notNowBtn.addEventListener("click", () => {
+      hideFocusTrackingOptIn();
+      showReopenButton();
+    });
+    notNowBtn.dataset.bound = "true";
+  }
+  const reopenBtn = document.getElementById("focus-tracking-reopen-btn");
+  if (reopenBtn && !reopenBtn.dataset.bound) {
+    reopenBtn.addEventListener("click", () => {
+      showFocusTrackingOptIn();
+      hideReopenButton();
+    });
+    reopenBtn.dataset.bound = "true";
+  }
+  if (turnOffBtn && !turnOffBtn.dataset.bound) {
+    turnOffBtn.addEventListener("click", () => {
+      stopEyeTracking();
+      hideFocusTrackingOnBar();
+      showFocusTrackingOptIn();
+    });
+    turnOffBtn.dataset.bound = "true";
+  }
+
+  updateFocusTrackingUI();
 }
 
 function joinMeeting() {
@@ -90,6 +594,12 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
         userEmail: "",
         success: (success) => {
           console.log("Join success:", success);
+          document.body.classList.add("meeting-active");
+          currentMeetingId = String(meetingNumber);
+          bindFocusTrackingButton();
+          connectMeetingWebSocket(meetingNumber);
+          bindPollPopupClose();
+          // Do not auto-start camera; only start when user clicks "Enable focus tracking" (privacy)
         },
         error: (error) => {
           console.error("Join error:", error);
@@ -97,6 +607,10 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           // Show form again
           document.getElementById("join-form").style.display = "block";
           document.getElementById("zmmtg-root").style.display = "none";
+          document.body.classList.remove("meeting-active");
+          stopEyeTracking();
+          closeMeetingWebSocket();
+          currentMeetingId = null;
           const joinButton = document.getElementById("join-button");
           joinButton.disabled = false;
           joinButton.textContent = "Join Meeting";
@@ -116,7 +630,26 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
   });
 }
 
+function bindPollPopupClose() {
+  const btn = document.getElementById("poll-popup-close-btn");
+  if (btn && !btn.dataset.bound) {
+    btn.addEventListener("click", hidePollPopup);
+    btn.dataset.bound = "true";
+  }
+  const overlay = document.getElementById("poll-popup-overlay");
+  if (overlay && !overlay.dataset.bound) {
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay) hidePollPopup();
+    });
+    overlay.dataset.bound = "true";
+  }
+}
+
 // Handle page leave
 window.addEventListener("beforeunload", () => {
+  document.body.classList.remove("meeting-active");
+  currentMeetingId = null;
+  stopEyeTracking();
+  closeMeetingWebSocket();
   ZoomMtg.endMeeting({});
 });

@@ -18,8 +18,8 @@ in the meantime:
 **front**
 
 ```
-c
-''''''''''''''''
+cd client
+npm run dev
 ```
 
 **back**
@@ -82,7 +82,7 @@ current pages
 
 * `/videoapp` → see engagement (gaze); optional: send `meetingId`/`userId` to feed agents
 * `/poll` → generate quizzes (from static summary.txt or live meeting if `?meetingId=` has data)
-* `/report` → teacher report: latest engagement summary (during or after meeting); popup every 5 min when connected via WebSocket
+* `/report` → teacher report: latest engagement summary, **engagement over time** (high vs low by window), **recent nudges sent**, and popup every 5 min when connected via WebSocket
 
 see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit together.
 
@@ -92,8 +92,9 @@ see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit
 
 * **single server (index.js)** – meeting state, WebSocket, and all agents now run in one process: `/api/events`, `/api/tick`, `/api/report`, and a 5‑minute periodic summary that pushes to connected clients
 * **gaze → agents** – optional `meetingId` / `userId` in `/api/analyze-gaze` stores attention as events so the engagement summarizer can use them
-* **teacher report** – new `/report` page: fetch latest engagement summary (during or after meeting). WebSocket gives live updates and a **popup every 5 minutes** with latest summary
-* **leaderboard** – `server/leaderboard.js` keeps per-meeting quiz scores when events include `QUIZ_ANSWER`.
+* **teacher report** – `/report` page: latest engagement summary, **time-based engagement** (“high here vs low here”), and **recent nudges sent**
+* **nudge agent** – new agent that sends **supportive, in-the-moment nudges** to low-engagement attendees (not punishment). Runs automatically with the summarizer; nudges are broadcast over WebSocket so the **attendee** sees a refocus popup. Rate-limited (same user at most once per 4 min)
+* **leaderboard** – `server/leaderboard.js` keeps per-meeting quiz scores when events include `QUIZ_ANSWER`
 * **docs** – `ARCHITECTURE.md` describes current vs target flow and where Zoom RTMS would plug in
 
 ---
@@ -120,11 +121,10 @@ npm run dev
 
 then open **http://localhost:5173**.
 
-## 2. test the poll page (static data)
+## 2. test the poll page
 
-* go to poll, click generate student quizzes
-* will be able to see quizzes generated from `server/summary.txt` for maya, carlos, liam. 
-* no meeting state needed; this uses the existing demo data.
+* go to **Poll**. You can leave **Meeting ID** as `default` (or set it to match your curl/Zoom meeting).
+* click **Generate Student Quizzes**. If there’s no live data for that meeting, you’ll see demo quizzes from `server/summary.txt` (Maya, Carlos, Liam). If there is live data (e.g. after step 4), you’ll see polls from the escalated meeting. **Later this same Meeting ID can come from the Zoom link.**
 
 ## 3. test the report page (no data yet)
 
@@ -153,7 +153,8 @@ curl -X POST http://localhost:3000/api/tick \
   -d '{"meetingId":"default"}'
 ```
 
-* go back to report, click refresh. should see a summary (class engagement, per-user, cold students) and last decision
+* go back to **Report**, click refresh — you should see a summary (class engagement, per-user, cold students) and last decision.
+* **Link to Poll:** open **Poll**, set Meeting ID to `default` (same as in the curl `meetingId`), click Generate. With live data you’ll see polls from this meeting (escalation-after-nudge). Later the meeting ID will come from the Zoom link instead of curl.
 
 ## 5. test the 5‑minute popup
 
@@ -164,8 +165,15 @@ curl -X POST http://localhost:3000/api/tick \
 
 ## 6. test gaze feeding into meeting state (optional)
 
-* the video app currently does not send `meetingId`/`userId`. to feed gaze into agents, we need to add those fields to the `/api/analyze-gaze` request body in `client/src/components/VideoApp.jsx`.  
-*after that, start the camera, send gaze a few times, then run **report** or **POST /api/tick** for the same `meetingId` to see attention in the summary
+* the video app currently does not send `meetingId`/`userId`. to feed gaze into agents, add those fields to the `/api/analyze-gaze` request body in `client/src/components/VideoApp.jsx`.  
+* after that, start the camera, send gaze a few times, then run **report** or **POST /api/tick** for the same `meetingId` to see attention in the summary
+
+## 7. test the nudge agent (refocus popup for attendees)
+
+* send events that create at least one low-engagement user (e.g. `userId: "u2"` with no chat and low/no attention), then run **POST /api/tick** with `meetingId: "default"`
+* on the **Report** page, enter a **Preview as attendee (userId)** value that matches someone who got a nudge (e.g. `u2` or `Sam`), and stay on the page with WebSocket connected
+* after the next agent run (or run `/api/tick` again), the server broadcasts `NUDGE` for that user; the Report page shows a **“Quick check-in” popup** with the supportive message (this is what the attendee would see in the Zoom app)
+* the Report page also shows **Engagement over time** and **Recent nudges sent** so the teacher can see when engagement was high vs low and what nudges were sent
 
 ---
 

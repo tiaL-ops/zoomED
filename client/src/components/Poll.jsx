@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 
 function Poll() {
+  const [meetingId, setMeetingId] = useState('default');
   const [studentPolls, setStudentPolls] = useState([]);
   const [topic, setTopic] = useState('');
   const [loading, setLoading] = useState(false);
@@ -12,7 +13,8 @@ function Poll() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('/api/poll');
+      const url = meetingId.trim() ? `/api/poll?meetingId=${encodeURIComponent(meetingId.trim())}` : '/api/poll';
+      const response = await fetch(url);
       const data = await response.json();
       
       if (data.success) {
@@ -54,11 +56,22 @@ function Poll() {
   return (
     <div style={{ padding: '40px', maxWidth: '1000px', margin: '0 auto' }}>
       <h1>Personalized Student Quiz Generator</h1>
-      <p>Generate adaptive quiz questions for each student based on their engagement level from the lecture summary</p>
-      
-      <button
-        onClick={generatePoll}
-        disabled={loading}
+      <p>Generate adaptive quiz questions based on engagement. Use the same <strong>Meeting ID</strong> as your events (e.g. curl or Zoom link) to see live polls after escalation; otherwise demo data is used.</p>
+
+      <div style={{ marginBottom: '20px', display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <label>
+          Meeting ID:
+          <input
+            type="text"
+            value={meetingId}
+            onChange={(e) => setMeetingId(e.target.value)}
+            placeholder="default"
+            style={{ marginLeft: '8px', padding: '8px 12px', width: '160px', borderRadius: '4px', border: '1px solid #ccc' }}
+          />
+        </label>
+        <button
+          onClick={generatePoll}
+          disabled={loading}
         style={{
           padding: '12px 24px',
           fontSize: '16px',
@@ -72,6 +85,7 @@ function Poll() {
       >
         {loading ? 'Generating Personalized Quizzes...' : 'Generate Student Quizzes'}
       </button>
+      </div>
 
       {error && (
         <div style={{

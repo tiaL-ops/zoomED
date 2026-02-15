@@ -8,7 +8,9 @@ function Report() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [popupSummary, setPopupSummary] = useState(null);
+  const [popupNudge, setPopupNudge] = useState(null);
   const [liveConnected, setLiveConnected] = useState(false);
+  const [previewAttendeeId, setPreviewAttendeeId] = useState('');
 
   const fetchReport = useCallback(async () => {
     if (!meetingId.trim()) return;
@@ -49,12 +51,21 @@ function Report() {
         if (msg.type === 'COORDINATOR_UPDATE' && msg.payload?.summary) {
           setReport((prev) => (prev ? { ...prev, lastSummary: msg.payload.summary, lastDecision: msg.payload.decision } : null));
         }
+        if (msg.type === 'NUDGE' && msg.payload) {
+          const uid = (msg.payload.userId || '').toString().trim();
+          const preview = previewAttendeeId.trim();
+          if (preview && uid && (uid === preview || msg.payload.displayName === preview)) {
+            setPopupNudge(msg.payload);
+          }
+          // Do not add nudges to report state—teacher report does not show them (give students leeway)
+        }
       } catch (_) {}
     };
     return () => ws.close();
-  }, [meetingId]);
+  }, [meetingId, previewAttendeeId]);
 
   const dismissPopup = () => setPopupSummary(null);
+  const dismissNudge = () => setPopupNudge(null);
 
   return (
     <div style={{ padding: '40px', maxWidth: '800px', margin: '0 auto', fontFamily: 'sans-serif' }}>
@@ -82,6 +93,16 @@ function Report() {
           {loading ? 'Loading…' : 'Refresh report'}
         </button>
         {liveConnected && <span style={{ color: '#28a745', fontSize: '14px' }}>● Live</span>}
+        <label style={{ marginLeft: '12px' }}>
+          Preview as attendee (userId):
+          <input
+            type="text"
+            value={previewAttendeeId}
+            onChange={(e) => setPreviewAttendeeId(e.target.value)}
+            placeholder="e.g. u2"
+            style={{ marginLeft: '6px', padding: '6px 10px', width: '100px', borderRadius: '4px', border: '1px solid #ccc' }}
+          />
+        </label>
       </div>
 
       {error && (
@@ -112,6 +133,20 @@ function Report() {
             <p style={{ marginTop: '12px', marginBottom: 0 }}><strong>Last decision:</strong> {report.lastDecision.action} — {report.lastDecision.reason}</p>
           )}
           <p style={{ fontSize: '12px', color: '#666', marginTop: '12px' }}>Event count: {report.eventCount}</p>
+        </div>
+      )}
+
+      {report?.engagementHistory?.length > 0 && (
+        <div style={{ background: '#f0f4ff', border: '1px solid #cce', borderRadius: '8px', padding: '16px', marginBottom: '20px' }}>
+          <h2 style={{ marginTop: 0 }}>Engagement over time</h2>
+          <p style={{ fontSize: '13px', color: '#555', marginBottom: '10px' }}>High vs low engagement by time window (for professor review).</p>
+          <ul style={{ margin: 0, paddingLeft: '20px', fontSize: '14px' }}>
+            {report.engagementHistory.slice(-15).reverse().map((h, i) => (
+              <li key={i}>
+                <strong>{new Date(h.at).toLocaleTimeString()}</strong> — engagement {h.class_engagement} {h.cold_students?.length ? `(${h.cold_students.length} cold)` : ''}: {h.summary}
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -158,6 +193,46 @@ function Report() {
               style={{ marginTop: '16px', padding: '8px 16px', background: '#333', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
             >
               Dismiss
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Nudge popup: shown to attendee (or when previewing as that userId) */}
+      {popupNudge && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            background: 'rgba(0,0,0,0.4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1001,
+          }}
+          onClick={dismissNudge}
+        >
+          <div
+            style={{
+              background: 'linear-gradient(135deg, #e8f5e9 0%, #fff 100%)',
+              padding: '24px',
+              borderRadius: '12px',
+              maxWidth: '400px',
+              boxShadow: '0 4px 20px rgba(0,0,0,0.2)',
+              border: '2px solid #81c784',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ marginTop: 0, color: '#2e7d32' }}>Quick check-in</h3>
+            <p style={{ fontSize: '16px', lineHeight: 1.5 }}>{popupNudge.message}</p>
+            <button
+              onClick={dismissNudge}
+              style={{ marginTop: '16px', padding: '10px 20px', background: '#2e7d32', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer' }}
+            >
+              Got it
             </button>
           </div>
         </div>

@@ -14,6 +14,34 @@ function getAnthropicClient() {
   return anthropic;
 }
 
+/** Extract a single JSON object from text (handles markdown, trailing content, extra newlines) */
+function extractJSON(text) {
+  if (!text || typeof text !== "string") throw new Error("No text to parse");
+  const trimmed = text.trim();
+  // Try direct parse first
+  try {
+    return JSON.parse(trimmed);
+  } catch (_) {}
+  // Try to find JSON object: first { to matching }
+  const start = trimmed.indexOf("{");
+  if (start === -1) throw new Error("No JSON object found in response");
+  let depth = 0;
+  let end = -1;
+  for (let i = start; i < trimmed.length; i++) {
+    if (trimmed[i] === "{") depth++;
+    else if (trimmed[i] === "}") {
+      depth--;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end === -1) throw new Error("Unbalanced braces in response");
+  const jsonStr = trimmed.slice(start, end + 1);
+  return JSON.parse(jsonStr);
+}
+
 async function callClaudeJSON(system, user) {
   const client = getAnthropicClient();
   const resp = await client.messages.create({
@@ -26,7 +54,7 @@ async function callClaudeJSON(system, user) {
   if (!textBlock || textBlock.type !== "text") {
     throw new Error("No text content in response");
   }
-  return JSON.parse(textBlock.text);
+  return extractJSON(textBlock.text);
 }
 
 // agent #1: engagement summarizer
@@ -124,7 +152,38 @@ Give GENERATE_POLL or PROMPT_INSTRUCTOR when class_engagement is 1 or many cold_
   return await callClaudeJSON(system, user);
 }
 
-// agent 3: quiz/poll generation agent
+// agent #3: nudge agent – first line of defense: gentle nudge with leeway (away, restroom, parent, etc.)
+export async function nudgeAgent(summary, options = {}) {
+  const meetingType = options.meetingType || 'education'; // 'education' | 'meeting'
+  const cold = summary.cold_students || [];
+  const perUser = summary.per_user || [];
+  const lowEngagement = perUser.filter((u) => u.engagement === 1).map((u) => ({ userId: u.userId, displayName: u.displayName, reason: u.reason }));
+
+  const system = `
+You are a nudge agent for a live meeting. Your job is to suggest short, supportive messages to re-engage attendees who appear disengaged.
+Give them leeway: they might be away briefly, in the restroom, or have a parent or someone else speaking to them. The nudge should be kind and assume good intent—not punishment or guilt. Frame as "when you're back, we'd love to have you with us" or "no rush—rejoin when you're ready."
+For education: warm, encouraging, understanding.
+For adult/professional meetings: neutral, professional (e.g. "When you're free, we'd love your input").
+Only suggest nudges for the low-engagement users provided. One nudge per user; keep each message to 1–2 short sentences.
+Return STRICT JSON only, no other text:
+{
+  "nudges": [
+    { "userId": "string", "displayName": "string", "message": "short supportive message", "reason": "short" }
+  ]
+}
+If there are no low-engagement users to nudge, return: { "nudges": [] }.
+`;
+
+  const user = JSON.stringify({
+    meetingType,
+    lowEngagement,
+    cold_students: cold,
+    class_summary: summary.summary,
+  });
+  return await callClaudeJSON(system, user);
+}
+
+// agent 4: quiz/poll generation agent
 export async function quizPollAgent(topic, transcriptSnippet, engagementLevel) {
   const system = `
 You are a quiz generator for a Zoom class.

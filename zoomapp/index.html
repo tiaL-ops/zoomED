@@ -72,6 +72,212 @@
         #zmmtg-root {
             display: none;
         }
+        .meeting-layout {
+            display: none;
+            min-height: 100vh;
+        }
+        .meeting-layout.in-meeting {
+            display: block;
+            min-height: 100vh;
+        }
+        .meeting-main {
+            min-height: 100vh;
+            margin-right: 280px;
+        }
+        body.student-panel-open.student-panel-collapsed .meeting-main { margin-right: 44px; }
+        .engagement-sidebar {
+            position: fixed;
+            top: 0;
+            right: 0;
+            bottom: 70px; /* leave Zoom controls (Leave, etc.) visible */
+            width: 280px;
+            max-width: 90vw;
+            background: #1a1d21;
+            color: #e4e6eb;
+            padding: 16px;
+            font-size: 14px;
+            overflow-y: auto;
+            z-index: 9998;
+            box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+            transition: width 0.2s, right 0.2s;
+        }
+        .engagement-sidebar.collapsed {
+            width: 44px;
+            padding: 12px 8px;
+            overflow: hidden;
+        }
+        .engagement-sidebar.collapsed .engagement-content { display: none; }
+        .engagement-sidebar .collapse-btn {
+            position: absolute;
+            top: 12px;
+            right: 12px;
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: none;
+            border-radius: 4px;
+            background: #25282c;
+            color: #e4e6eb;
+            font-size: 14px;
+            cursor: pointer;
+            line-height: 1;
+        }
+        .engagement-sidebar.collapsed .collapse-btn { right: 8px; }
+        .engagement-sidebar h2 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+        }
+        .engagement-sidebar .section { margin-bottom: 16px; }
+        .engagement-sidebar .meter {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .engagement-sidebar .meter.low { color: #e74c3c; }
+        .engagement-sidebar .meter.mid { color: #e6b800; }
+        .engagement-sidebar .meter.high { color: #31a24c; }
+        .engagement-sidebar .btn {
+            display: block;
+            width: 100%;
+            padding: 8px 12px;
+            margin-bottom: 8px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .engagement-sidebar .btn-primary { background: #0b65c2; color: #fff; }
+        .engagement-sidebar .btn-secondary { background: #25282c; color: #e4e6eb; }
+        .engagement-sidebar .btn-small { padding: 6px 10px; font-size: 12px; }
+        #eye-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 9999;
+            display: none;
+        }
+        body.meeting-active #eye-overlay {
+            display: block;
+        }
+        #eye-video {
+            display: none;
+        }
+        #focus-tracking-opt-in {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.45);
+            align-items: center;
+            justify-content: center;
+            z-index: 9998;
+        }
+        body.meeting-active #focus-tracking-opt-in {
+            display: flex;
+        }
+        #focus-tracking-opt-in.hidden {
+            display: none !important;
+        }
+        #focus-tracking-card {
+            width: min(360px, 90vw);
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+            text-align: center;
+        }
+        #focus-tracking-card h2 {
+            margin: 0 0 10px 0;
+            font-size: 18px;
+            color: #1a1d21;
+        }
+        #focus-tracking-card p {
+            margin: 0 0 20px 0;
+            font-size: 14px;
+            color: #4a4f55;
+            line-height: 1.4;
+        }
+        #focus-tracking-card .popup-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        #focus-tracking-card .popup-actions button {
+            padding: 10px 18px;
+            border-radius: 10px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        #enable-focus-tracking-btn {
+            background: #0b65c2;
+            color: #fff;
+            border: none;
+        }
+        #enable-focus-tracking-btn:hover {
+            background: #095196;
+        }
+        #focus-tracking-not-now-btn {
+            background: #e9edf2;
+            color: #1a1d21;
+            border: none;
+        }
+        #focus-tracking-not-now-btn:hover {
+            background: #dde1e6;
+        }
+        #focus-tracking-on-bar {
+            display: none;
+            position: fixed;
+            left: 50%;
+            top: 24px;
+            transform: translateX(-50%);
+            z-index: 9997;
+            background: rgba(26, 29, 33, 0.92);
+            color: #fff;
+            padding: 10px 18px;
+            border-radius: 24px;
+            font-size: 13px;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        #focus-tracking-on-bar.visible {
+            display: flex;
+        }
+        #focus-tracking-turn-off-btn {
+            background: transparent;
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.5);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        #focus-tracking-turn-off-btn:hover {
+            background: rgba(255,255,255,0.15);
+        }
+        #focus-tracking-reopen-btn {
+            display: none;
+            position: fixed;
+            right: 20px;
+            bottom: 72px;
+            z-index: 9996;
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            background: #0b65c2;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            box-shadow: 0 2px 12px rgba(11, 101, 194, 0.35);
+        }
+        #focus-tracking-reopen-btn.visible {
+            display: block;
+        }
+        #focus-tracking-reopen-btn:hover {
+            background: #095196;
+        }
         .error {
             color: #e74c3c;
             font-size: 14px;
@@ -82,11 +288,142 @@
             color: #888;
             margin-top: 5px;
         }
+        #focus-popup-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.55);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+        }
+        #focus-popup-overlay.active {
+            display: flex;
+        }
+        #focus-popup {
+            width: min(380px, 90vw);
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 16px 40px rgba(0, 0, 0, 0.2);
+            text-align: center;
+        }
+        #focus-popup h2 {
+            margin: 0 0 8px 0;
+            font-size: 20px;
+            color: #1a1d21;
+        }
+        #focus-popup p {
+            margin: 0 0 16px 0;
+            font-size: 14px;
+            color: #4a4f55;
+        }
+        #focus-popup .popup-actions {
+            display: flex;
+            gap: 10px;
+        }
+        #focus-popup .popup-actions button {
+            flex: 1;
+            padding: 10px 12px;
+            border-radius: 10px;
+            font-size: 13px;
+        }
+        #focus-game-btn {
+            background: #0b65c2;
+            color: #fff;
+        }
+        #focus-close-btn {
+            background: #e9edf2;
+            color: #1a1d21;
+        }
+        #poll-popup-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 10001;
+        }
+        #poll-popup-overlay.active {
+            display: flex;
+        }
+        #poll-popup {
+            width: min(420px, 92vw);
+            max-height: 85vh;
+            overflow: auto;
+            background: #fff;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+        }
+        #poll-popup h2 {
+            margin: 0 0 16px 0;
+            font-size: 18px;
+            color: #1a1d21;
+        }
+        #poll-popup .poll-question {
+            margin-bottom: 16px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #eee;
+        }
+        #poll-popup .poll-question:last-child {
+            border-bottom: none;
+        }
+        #poll-popup .poll-question strong {
+            display: block;
+            margin-bottom: 8px;
+        }
+        #poll-popup-close-btn {
+            margin-top: 16px;
+            padding: 10px 18px;
+            border-radius: 8px;
+            background: #0b65c2;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
     <div id="zmmtg-root"></div>
     
+    <video id="eye-video" playsinline></video>
+    <canvas id="eye-overlay"></canvas>
+    <div id="focus-tracking-opt-in" aria-label="Focus tracking opt-in" role="dialog" aria-modal="true">
+        <div id="focus-tracking-card">
+            <h2>Focus tracking</h2>
+            <p>Use your camera for attention cues. Only you control when it's on.</p>
+            <div class="popup-actions">
+                <button type="button" id="enable-focus-tracking-btn">Enable focus tracking</button>
+                <button type="button" id="focus-tracking-not-now-btn">Not now</button>
+            </div>
+        </div>
+    </div>
+    <div id="focus-tracking-on-bar" aria-live="polite">
+        <span>Focus tracking on</span>
+        <button type="button" id="focus-tracking-turn-off-btn">Turn off</button>
+    </div>
+    <button type="button" id="focus-tracking-reopen-btn" aria-label="Show focus tracking options">Focus tracking</button>
+    <div id="focus-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="focus-popup-title">
+        <div id="focus-popup">
+            <h2 id="focus-popup-title">Claude: Quick focus check</h2>
+            <p>Looks like your attention drifted. Want a 20-second focus game?</p>
+            <div class="popup-actions">
+                <button id="focus-game-btn" type="button">Open focus game</button>
+                <button id="focus-close-btn" type="button">I am back</button>
+            </div>
+        </div>
+    </div>
+    <div id="poll-popup-overlay" role="dialog" aria-modal="true" aria-labelledby="poll-popup-title">
+        <div id="poll-popup">
+            <h2 id="poll-popup-title">Quick check question</h2>
+            <div id="poll-popup-content"></div>
+            <button type="button" id="poll-popup-close-btn">Got it</button>
+        </div>
+    </div>
+
     <div class="container" id="join-form">
         <h1>🎥 Join Zoom Meeting</h1>
         

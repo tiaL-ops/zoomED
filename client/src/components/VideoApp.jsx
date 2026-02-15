@@ -31,13 +31,6 @@ function VideoApp() {
     };
   }, []);
 
-  const drawDot = (ctx, point, color, width, height) => {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(point.x * width, point.y * height, 3, 0, 2 * Math.PI);
-    ctx.fill();
-  };
-
   const onResults = (results) => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -76,8 +69,7 @@ function VideoApp() {
         console.error('Error communicating with backend:', error);
       });
 
-      drawDot(ctx, leftIris, 'red', canvas.width, canvas.height);
-      drawDot(ctx, rightIris, 'red', canvas.width, canvas.height);
+      // Do not draw gaze dots on screen (privacy; not visible to students)
     } else {
       setStatus('NO FACE');
       setBackground('white');

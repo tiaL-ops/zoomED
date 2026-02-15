@@ -260,7 +260,6 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
 function getFocusPopupElements() {
   return {
     overlay: document.getElementById("focus-popup-overlay"),
-    gameButton: document.getElementById("focus-game-btn"),
     closeButton: document.getElementById("focus-close-btn"),
   };
 }
@@ -414,16 +413,7 @@ function startEyeTracking() {
     },
   };
 
-  const { gameButton, closeButton, overlay } = getFocusPopupElements();
-  if (gameButton && !gameButton.dataset.bound) {
-    gameButton.addEventListener("click", () => {
-      clearNudgePopupTimeout();
-      window.alert("To do: implement game");
-      hideFocusPopup();
-      unfocusedSinceMs = Date.now();
-    });
-    gameButton.dataset.bound = "true";
-  }
+  const {closeButton, overlay } = getFocusPopupElements();
   if (closeButton && !closeButton.dataset.bound) {
     closeButton.addEventListener("click", () => {
       clearNudgePopupTimeout();

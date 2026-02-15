@@ -217,6 +217,32 @@ Chat messages sent during a Zoom meeting are forwarded to the server and used by
 
 **Note:** Only participants whose client runs the zoomapp will forward chat. Typically the **host** runs the zoomapp and forwards all chat messages to the backend.
 
+## 9. Live transcription → poll/question agent context
+
+When the **host** enables **Live Transcript** (or "Save closed captions") in the Zoom meeting, the zoomapp receives real-time transcription via the Meeting SDK and forwards each line to the server. That transcript is stored in `meeting.recentTranscriptSnippets` and used by:
+
+- **Engagement summarizer** – includes "what was covered" in the summary when transcript is present.
+- **Transcribing agent** – turns raw caption snippets (and optional uploaded lecture) into one clean "lecture content" block. Use it when live transcript is flaky or messy: it merges fragments, drops filler, and combines with uploaded notes so the poll agent gets coherent material.
+- **Quiz/poll agent** – when you trigger a material quiz (e.g. after 3 look-aways), it receives the **transcribing agent** output (or a raw merge fallback) and generates questions from that only.
+
+**How to enable:** In the Zoom meeting, host clicks **Live Transcript** → **Enable Auto-Transcription** (or **Save Captions**). Participants using the zoomapp will then stream caption lines to the backend; the question agent uses this context for specialized questions on the material being discussed.
+
+**Do I need to preload a lecture?** No. When Live Transcript is on, questions are created from **what was actually said** in the meeting (the last ~15 caption snippets). You can also use **Load sample transcript** (Report page or zoom-panel) to seed transcript for demos when you don’t have Live Transcript.
+
+**Optional: Upload lecture to scope questions**  
+To avoid questions that drift to out-of-context topics, you can upload lecture notes so the agent only asks about that material (plus the live transcript). The agent will use **only** the transcript + uploaded lecture; nothing else.
+
+- **API:** `POST /api/meetings/:meetingId/lecture` with body `{ "text": "your lecture notes or slides text..." }`
+- **GET** `/api/meetings/:meetingId/lecture` returns the current lecture text.
+
+Example (replace `YOUR_MEETING_ID` with your Zoom meeting number):
+
+```bash
+curl -X POST http://localhost:3000/api/meetings/YOUR_MEETING_ID/lecture \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Today we cover the Work-Energy Theorem. Net work equals change in kinetic energy. W = ΔKE."}'
+```
+
 ---
 
 **Claude API key:** [Create a key here](https://platform.claude.com/settings/keys) and set `CLAUDE_API_KEY` in `server/.env`.

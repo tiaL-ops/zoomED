@@ -85,6 +85,10 @@
             margin-right: 280px;
         }
         body.student-panel-open.student-panel-collapsed .meeting-main { margin-right: 44px; }
+        /* Sidebar only visible when actually in the call (hidden on join form and while connecting/waiting) */
+        body.joining .engagement-sidebar { display: none; }
+        body.joining .meeting-main { margin-right: 0; }
+        body.in-call .engagement-sidebar { display: block; }
         .engagement-sidebar {
             position: fixed;
             top: 0;
@@ -155,6 +159,23 @@
         .engagement-sidebar .sidebar-questions-content .poll-question { margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.08); }
         .engagement-sidebar .sidebar-questions-content .poll-question:last-child { border-bottom: none; }
         .engagement-sidebar .sidebar-questions-content .poll-options-list { margin: 6px 0 0 0; padding-left: 18px; }
+        .engagement-sidebar .poll-options-btns { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+        .engagement-sidebar .poll-option-btn {
+            display: block; width: 100%; text-align: left; padding: 10px 12px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.25);
+            background: rgba(255,255,255,0.06); color: #e4e6eb; font-size: 13px; cursor: pointer; transition: background 0.2s, border-color 0.2s;
+        }
+        .engagement-sidebar .poll-option-btn:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.35); }
+        .engagement-sidebar .poll-option-btn.correct { background: #1b5e20; border-color: #2e7d32; color: #fff; }
+        .engagement-sidebar .poll-option-btn.wrong { background: #b71c1c; border-color: #c62828; color: #fff; animation: poll-shake 0.5s ease; }
+        @keyframes poll-shake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-6px); }
+            40% { transform: translateX(6px); }
+            60% { transform: translateX(-4px); }
+            80% { transform: translateX(4px); }
+        }
+        .engagement-sidebar .poll-explanation { margin-top: 10px; font-size: 12px; color: #8a8d91; line-height: 1.4; }
+        .engagement-sidebar .poll-question.answered-correct { opacity: 0.7; }
         #eye-overlay {
             position: fixed;
             top: 0;

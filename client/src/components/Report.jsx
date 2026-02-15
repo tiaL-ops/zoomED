@@ -112,6 +112,7 @@ function Report() {
   const [popupNudge, setPopupNudge] = useState(null);
   const [liveConnected, setLiveConnected] = useState(false);
   const [previewAttendeeId, setPreviewAttendeeId] = useState('');
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
 
   const fetchReport = useCallback(async (runSummaryFirst = false) => {
     if (!meetingId.trim()) return;
@@ -210,6 +211,26 @@ function Report() {
     }
   };
 
+  const loadSampleTranscript = useCallback(async () => {
+    if (!meetingId.trim()) return;
+    setTranscriptLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/meetings/${encodeURIComponent(meetingId.trim())}/transcript/load-sample`, {
+        method: 'POST',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || res.statusText);
+      }
+      await fetchReport();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }, [meetingId, fetchReport]);
+
   return (
     <div style={{ padding: '40px 32px 48px', maxWidth: '1100px', margin: '0 auto', fontFamily: 'system-ui, sans-serif', fontSize: '17px', minHeight: 'calc(100vh - 60px)' }}>
       <div style={{ marginBottom: '32px' }}>
@@ -248,6 +269,14 @@ function Report() {
             End meeting
           </button>
         )}
+        <button
+          onClick={loadSampleTranscript}
+          disabled={transcriptLoading || !meetingId.trim()}
+          style={{ padding: '10px 20px', background: '#64748b', color: 'white', border: 'none', borderRadius: '8px', fontSize: '16px', fontWeight: 500, cursor: transcriptLoading ? 'not-allowed' : 'pointer' }}
+          title="Load sample transcript text for testing questions and summaries"
+        >
+          {transcriptLoading ? 'Loading…' : 'Load sample transcript'}
+        </button>
         {liveConnected && !report?.endedAt && <span style={{ color: '#16a34a', fontSize: '15px', fontWeight: 500 }}>● Live</span>}
         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', color: '#64748b', marginLeft: '8px' }}>
           Preview as
@@ -359,6 +388,22 @@ function Report() {
           </div>
         )}
       </div>
+      {report?.transcriptLines?.length > 0 && (
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '14px', padding: '24px 28px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)', marginBottom: '24px' }}>
+          <h2 style={{ marginTop: 0, marginBottom: '10px', fontSize: '1.2rem', color: '#1e293b' }}>Transcript snippets</h2>
+          <p style={{ fontSize: '14px', color: '#64748b', marginBottom: '12px' }}>
+            Last {report.transcriptLines.length} snippet(s) captured for this meeting.
+          </p>
+          <ul style={{ margin: 0, paddingLeft: '22px', fontSize: '15px', maxHeight: '300px', overflowY: 'auto', lineHeight: 1.5 }}>
+            {report.transcriptLines.slice(-20).map((line, i) => (
+              <li key={i} style={{ marginBottom: '8px' }}>
+                {line.speaker && <strong>{line.speaker}: </strong>}
+                {(line.text || '').slice(0, 300)}{(line.text || '').length > 300 ? '…' : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {report && !report.lastSummary && report.eventCount !== undefined && (
         <p style={{ color: '#64748b', fontSize: '16px' }}>No summary yet. Send events and refresh, or wait for the next 10‑minute update.</p>

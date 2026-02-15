@@ -5,7 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { WebSocketServer } from 'ws';
-import { quizPollAgent, engagementSummarizerAgent, meetingCoordinatorAgent, nudgeAgent, orchestrateEngagementSystem } from './agents.js';
+import { quizPollAgent, transcribingAgent, engagementSummarizerAgent, meetingCoordinatorAgent, nudgeAgent, orchestrateEngagementSystem } from './agents.js';
 import { updateLeaderboard } from './leaderboard.js';
 import dotenv from 'dotenv';
 
@@ -162,6 +162,12 @@ async function runAgentsForMeeting(meetingId) {
 // ----- Middleware -----
 app.use(cors());
 app.use(express.json());
+
+// Health check – must be before any static/catch-all. Use http://localhost:3000/api/health (not 4000)
+app.get('/api/health', (req, res) => {
+  res.json({ ok: true, service: 'zoom-engagement-server', port: PORT });
+});
+
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; connect-src *;");
   next();
@@ -442,15 +448,19 @@ async function getSampleMaterial() {
 }
 
 // ----- Look away 3+ times: client calls this to pop sidebar and get material quiz from agent -----
+// Material for questions: (1) live transcript (what was said), (2) summarizer summary, (3) sample file. Optional: uploaded lecture scopes questions to that material only.
 app.post('/api/meetings/:meetingId/trigger-material-quiz', async (req, res) => {
   const meetingId = req.params.meetingId;
   const { userId, displayName } = req.body || {};
   if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
   let meeting = meetingState[meetingId];
   if (!meeting) {
-    meeting = { events: [], recentTranscriptSnippets: [] };
+    meeting = { events: [], recentTranscriptSnippets: [], uploadedLecture: null };
     meetingState[meetingId] = meeting;
   }
+  if (meeting.uploadedLecture === undefined) meeting.uploadedLecture = null;
+  console.log('[trigger-material-quiz] meetingId=%s userId=%s', meetingId, userId || 'unknown');
+
   let summary = meeting.lastSummary;
   try {
     if (!summary) {
@@ -468,26 +478,148 @@ app.post('/api/meetings/:meetingId/trigger-material-quiz', async (req, res) => {
     recommendedDifficulty: 1,
     signals: {},
   };
-  let materialSnippet = (summary && summary.summary) ? String(summary.summary).trim() : '';
-  if (!materialSnippet) {
-    materialSnippet = await getSampleMaterial();
+  // LIVE-first question material: spoken transcript from this meeting (plus optional uploaded lecture scope).
+  // Do NOT fallback to summary/sample here, otherwise questions drift off what was actually said.
+  const snippets = meeting.recentTranscriptSnippets || [];
+  const uploadedLecture = meeting.uploadedLecture || null;
+  const liveTranscript = snippets
+    .slice(-25)
+    .map((s) => (s && s.text ? s.text : ''))
+    .filter(Boolean)
+    .join(' ')
+    .trim()
+    .slice(0, 5000);
+
+  let lectureContent = liveTranscript;
+  if (liveTranscript) {
+    try {
+      const transcribed = await transcribingAgent(
+        snippets.slice(-25),
+        uploadedLecture || '',
+        ''
+      );
+      const refined = (transcribed && transcribed.lectureContent) ? String(transcribed.lectureContent).trim() : '';
+      if (refined) lectureContent = refined;
+    } catch (e) {
+      console.warn('Transcribing agent failed, using raw transcript merge:', e.message);
+    }
   }
+  if (!lectureContent && uploadedLecture) {
+    lectureContent = String(uploadedLecture).trim().slice(0, 5000);
+  }
+
+  const transcriptWordCount = lectureContent ? lectureContent.split(/\s+/).filter(Boolean).length : 0;
   const classContext = {
     currentTopic: 'material covered in class',
-    recentTranscript: materialSnippet,
+    recentTranscript: lectureContent,
+    uploadedLecture: null, // already merged into recentTranscript by transcribing agent or fallback
   };
-  try {
-    const result = await quizPollAgent(participantContext, classContext);
-    const poll = result && result.questions && result.questions.length > 0
-      ? { questions: result.questions }
-      : { questions: [] };
+  let poll = { questions: [] };
+  let hint = null;
+  if (transcriptWordCount < 25) {
+    hint = 'Need more live transcript before generating a useful question. Keep Live Transcript on and speak for ~20-30 seconds.';
     broadcast(meetingId, {
       type: 'POLL_SUGGESTION',
-      payload: { poll, reason: 'Look-away material quiz', summary },
+      payload: { poll, reason: 'Look-away material quiz', summary, hint },
     });
-    res.json({ poll });
+    return res.json({ poll, hint });
+  }
+  try {
+    const result = await quizPollAgent(participantContext, classContext);
+    if (result && result.questions && result.questions.length > 0) {
+      poll = { questions: result.questions };
+      console.log('[trigger-material-quiz] got %d question(s)', poll.questions.length);
+    } else {
+      hint = lectureContent.length > 0
+        ? 'Agent returned no questions. Check server/.env has CLAUDE_API_KEY.'
+        : 'No live transcript yet. Enable Live Transcript in Zoom so spoken audio can become questions.';
+      console.log('[trigger-material-quiz] no questions: hint=%s', hint.slice(0, 60));
+    }
   } catch (err) {
     console.error('Quiz poll agent error:', err);
+    hint = 'Question agent failed. Set CLAUDE_API_KEY in server/.env and ensure transcript is available.';
+  }
+  broadcast(meetingId, {
+    type: 'POLL_SUGGESTION',
+    payload: { poll, reason: 'Look-away material quiz', summary, hint },
+  });
+  res.json({ poll, hint });
+});
+
+// ----- Transcript reader: ingest and read meeting transcript for agents -----
+const MAX_TRANSCRIPT_SNIPPETS = 100;
+
+function normalizeTranscriptSnippet(line) {
+  if (typeof line === 'string') return { text: line.trim(), ts: Date.now() };
+  const text = (line && line.text) ? String(line.text).trim() : '';
+  return text ? { text, speaker: line.speaker, ts: line.ts ?? Date.now() } : null;
+}
+
+app.post('/api/meetings/:meetingId/transcript', (req, res) => {
+  const meetingId = req.params.meetingId;
+  const body = req.body || {};
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  meetingState[meetingId] = meetingState[meetingId] || { events: [], recentTranscriptSnippets: [] };
+  const meeting = meetingState[meetingId];
+  meeting.recentTranscriptSnippets = meeting.recentTranscriptSnippets || [];
+
+  const lines = body.lines ? (Array.isArray(body.lines) ? body.lines : [body.lines]) : (body.text != null ? [body] : []);
+  let added = 0;
+  for (const line of lines) {
+    const snippet = normalizeTranscriptSnippet(line);
+    if (snippet) {
+      meeting.recentTranscriptSnippets.push(snippet);
+      added++;
+    }
+  }
+  if (meeting.recentTranscriptSnippets.length > MAX_TRANSCRIPT_SNIPPETS) {
+    meeting.recentTranscriptSnippets = meeting.recentTranscriptSnippets.slice(-MAX_TRANSCRIPT_SNIPPETS);
+  }
+  res.json({ ok: true, added, total: meeting.recentTranscriptSnippets.length });
+});
+
+app.get('/api/meetings/:meetingId/transcript', (req, res) => {
+  const meetingId = req.params.meetingId;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'no meeting' });
+  const lines = meeting.recentTranscriptSnippets || [];
+  res.json({ meetingId, lines });
+});
+
+// ----- Optional uploaded lecture: scope questions to this material (no out-of-context questions) -----
+app.post('/api/meetings/:meetingId/lecture', (req, res) => {
+  const meetingId = req.params.meetingId;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  meetingState[meetingId] = meetingState[meetingId] || { events: [], recentTranscriptSnippets: [], uploadedLecture: null };
+  const meeting = meetingState[meetingId];
+  const text = (req.body && req.body.text != null) ? String(req.body.text).trim() : '';
+  meeting.uploadedLecture = text || null;
+  res.json({ ok: true, hasLecture: !!meeting.uploadedLecture });
+});
+
+app.get('/api/meetings/:meetingId/lecture', (req, res) => {
+  const meetingId = req.params.meetingId;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'no meeting' });
+  res.json({ meetingId, text: meeting.uploadedLecture || '' });
+});
+
+app.post('/api/meetings/:meetingId/transcript/load-sample', async (req, res) => {
+  const meetingId = req.params.meetingId;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  meetingState[meetingId] = meetingState[meetingId] || { events: [], recentTranscriptSnippets: [] };
+  const meeting = meetingState[meetingId];
+  try {
+    const summaryPath = path.join(__dirname, 'summary.txt');
+    const content = await fs.readFile(summaryPath, 'utf-8');
+    const blocks = content.split(/\n\s*\n/).filter((b) => b.trim().length > 0);
+    const snippets = blocks.map((block) => ({ text: block.trim().slice(0, 2000), ts: Date.now() }));
+    meeting.recentTranscriptSnippets = (meeting.recentTranscriptSnippets || []).concat(snippets).slice(-MAX_TRANSCRIPT_SNIPPETS);
+    res.json({ ok: true, loaded: snippets.length, total: meeting.recentTranscriptSnippets.length });
+  } catch (err) {
+    console.error('Load sample transcript error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -506,6 +638,7 @@ app.get('/api/report', (req, res) => {
     engagementHistory: meeting.engagementHistory ?? [],
     endedAt: meeting.endedAt ?? null,
     // Nudges omitted from teacher report to give students leeway; only question/poll escalation is shown
+    transcriptLines: (meeting.recentTranscriptSnippets || []).slice(-50),
   };
   res.json(report);
 });

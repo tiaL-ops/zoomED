@@ -15,7 +15,12 @@ const FOCUS_POPUP_COOLDOWN_MS = 7000;   // 7 sec between popups (was 12)
 const UNFOCUSED_TRIGGER_MS = 1500;      // 1.5 sec looking away to trigger (was 2)
 const NUDGE_POPUP_AUTO_QUESTION_MS = 18000;  // 18 sec: if user doesn't pick, trigger question agent
 const LOOK_AWAY_COUNT_FOR_QUIZ = 3;    // after 3 look-aways, pop sidebar and trigger material quiz
+const QUIZ_COOLDOWN_MS = 2 * 60 * 1000; // after answering, don't show new questions for 2 min (until next disengagement)
+const NUDGE_GRACE_AFTER_QUIZ_MS = 60 * 1000; // 60s grace: no nudge right after finishing questions
 let focusPopupShowCount = 0;           // how many times we've shown the focus popup this "session"
+let sidebarQuizCooldownUntil = 0;     // ignore POLL_SUGGESTION until this time (so questions don't loop)
+let questionRoundActive = false;      // while answering sidebar questions, pause nudge flow
+let nudgeGraceUntil = 0;              // absolute timestamp until nudges are paused
 const FOCUS_GAME_URL = "http://localhost:5173/videoapp";
 const SERVER_WS_PORT = 3000;
 const ATTENTION_POST_INTERVAL_MS = 5000;  // throttle attention events to server
@@ -48,6 +53,55 @@ function forwardChatToServer(chatData) {
   });
 }
 
+function pickTranscriptTextFromObject(obj) {
+  if (!obj || typeof obj !== "object") return "";
+  var candidates = [
+    obj.messageContent,
+    obj.msg,
+    obj.text,
+    obj.content,
+    obj.captionMessage,
+    obj.message,
+    obj.caption,
+    obj.transcript,
+    obj.body,
+  ];
+  for (var i = 0; i < candidates.length; i += 1) {
+    var c = candidates[i];
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  if (Array.isArray(obj.lines)) {
+    var joined = obj.lines
+      .map(function (l) { return typeof l === "string" ? l : (l && (l.text || l.content || l.msg)) || ""; })
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    if (joined) return joined;
+  }
+  if (obj.payload && typeof obj.payload === "object") {
+    var nested = pickTranscriptTextFromObject(obj.payload);
+    if (nested) return nested;
+  }
+  return "";
+}
+
+// Forward live transcription to server so poll/question agent gets real-time context (Zoom: host must enable "save closed captions" / live transcript)
+function forwardLiveTranscriptionToServer(data) {
+  if (!currentMeetingId) return;
+  var text = "";
+  if (typeof data === "string") text = data.trim();
+  if (!text) text = pickTranscriptTextFromObject(data);
+  if (!text) return;
+  var speaker = (data && (data.speakerName || data.userName || data.speaker || data.displayName)) ? String(data.speakerName || data.userName || data.speaker || data.displayName) : "";
+  var scheme = location.protocol === "https:" ? "https:" : "http:";
+  var host = location.hostname || "localhost";
+  fetch(scheme + "//" + host + ":" + SERVER_WS_PORT + "/api/meetings/" + encodeURIComponent(currentMeetingId) + "/transcript", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ lines: [{ text: text, speaker: speaker || undefined, ts: data.timeStamp || Date.now() }] }),
+  }).catch(function () {});
+}
+
 function showError(message) {
   const errorDiv = document.getElementById("error-message");
   errorDiv.textContent = message;
@@ -66,9 +120,17 @@ function connectMeetingWebSocket(meetingNumber) {
     meetingWs.onmessage = function (event) {
       try {
         const msg = JSON.parse(event.data);
-        if (msg.type === "POLL_SUGGESTION" && msg.payload && msg.payload.poll) {
-          showPollInSidebar(msg.payload.poll);
-          showPollPopup(msg.payload.poll);
+        if (msg.type === "POLL_SUGGESTION" && msg.payload) {
+          if (msg.payload.reason !== "Look-away material quiz") return; // sidebar questions should only run for disengagement flow
+          if (Date.now() < sidebarQuizCooldownUntil) return; // don't show new questions until next disengagement round
+          const poll = msg.payload.poll;
+          const hint = msg.payload.hint;
+          if (poll && poll.questions && poll.questions.length > 0) {
+            showPollInSidebar(poll);
+            clearSidebarHint();
+          } else if (hint) {
+            showSidebarHint(hint);
+          }
         }
       } catch (e) {}
     };
@@ -89,6 +151,8 @@ function closeMeetingWebSocket() {
   }
 }
 
+var currentSidebarPoll = null;
+
 function escapeHtml(s) {
   if (s == null) return "";
   var div = document.createElement("div");
@@ -97,37 +161,132 @@ function escapeHtml(s) {
 }
 
 function renderPollHtml(poll) {
-  const questions = (poll && poll.questions) || [];
+  var questions = (poll && poll.questions) || [];
   return questions
-    .map(
-      function (q) {
-        var opts = (q.options || []).map(function (o) {
-          return "<li>" + escapeHtml(o) + "</li>";
-        }).join("");
+    .map(function (q, qIdx) {
+      var correctIndex = q.correctIndex != null ? q.correctIndex : 0;
+      var opts = (q.options || []).map(function (o, oIdx) {
         return (
-          '<div class="poll-question">' +
-          "<strong>" + escapeHtml(q.question) + "</strong>" +
-          (opts ? "<ul class=\"poll-options-list\">" + opts + "</ul>" : "") +
-          "</div>"
+          '<button type="button" class="poll-option-btn" data-question-index="' + qIdx + '" data-option-index="' + oIdx + '" data-correct-index="' + correctIndex + '">' +
+          escapeHtml(o) +
+          "</button>"
         );
-      }
-    )
+      }).join("");
+      return (
+        '<div class="poll-question" data-question-index="' + qIdx + '">' +
+        "<strong>" + escapeHtml(q.question) + "</strong>" +
+        (opts ? '<div class="poll-options-btns">' + opts + "</div>" : "") +
+        '<div class="poll-explanation" aria-live="polite"></div>' +
+        "</div>"
+      );
+    })
     .join("");
 }
 
-function showPollInSidebar(poll) {
-  const container = document.getElementById("sidebar-questions-content");
+function showSidebarHint(message) {
   const emptyEl = document.getElementById("sidebar-questions-empty");
+  const container = document.getElementById("sidebar-questions-content");
+  if (emptyEl) {
+    emptyEl.textContent = message;
+    emptyEl.style.display = "";
+  }
+  if (container) container.innerHTML = "";
+}
+
+function clearSidebarHint() {
+  const emptyEl = document.getElementById("sidebar-questions-empty");
+  if (emptyEl) {
+    emptyEl.textContent = "No questions yet. When you look away 3 times, the agent will prompt you with a question on the material here.";
+  }
+}
+
+function showPollInSidebar(poll) {
+  var container = document.getElementById("sidebar-questions-content");
+  var emptyEl = document.getElementById("sidebar-questions-empty");
   if (!container) return;
   if (!poll || !poll.questions || poll.questions.length === 0) {
     container.innerHTML = "";
+    currentSidebarPoll = null;
+    questionRoundActive = false;
     if (emptyEl) emptyEl.style.display = "";
     return;
   }
+  questionRoundActive = true;
+  // Pause nudge flow while user is answering questions.
+  clearNudgePopupTimeout();
+  hideFocusPopup();
+  currentSidebarPoll = poll;
   container.innerHTML = renderPollHtml(poll);
+  container.removeAttribute("data-poll-bound"); // re-bind for new buttons
   if (emptyEl) emptyEl.style.display = "none";
-  // Pop open the sidebar when the agent sends a question (e.g. after looking away)
   openSidebarIfCollapsed();
+  bindSidebarPollOptions(container);
+}
+
+function collapseSidebarAfterAnswered() {
+  var sidebar = document.getElementById("engagement-sidebar");
+  if (sidebar) {
+    sidebar.classList.add("collapsed");
+    document.body.classList.add("student-panel-collapsed");
+  }
+  var collapseBtn = document.getElementById("sidebar-collapse-btn");
+  if (collapseBtn) {
+    collapseBtn.textContent = "»";
+    collapseBtn.setAttribute("aria-label", "Expand panel");
+    collapseBtn.title = "Expand panel";
+  }
+  // Resume nudge flow only after question set is completed.
+  questionRoundActive = false;
+  focusPopupShowCount = 0;
+  unfocusedSinceMs = null;
+  nudgeGraceUntil = Date.now() + NUDGE_GRACE_AFTER_QUIZ_MS;
+  sidebarQuizCooldownUntil = Date.now() + QUIZ_COOLDOWN_MS; // no new questions until next disengagement
+}
+
+function bindSidebarPollOptions(container) {
+  if (!container || container.dataset.pollBound) return;
+  container.dataset.pollBound = "true";
+  container.addEventListener("click", function (e) {
+    var btn = e.target && e.target.closest && e.target.closest(".poll-option-btn");
+    if (!btn) return;
+    var questionBlock = btn.closest(".poll-question");
+    if (questionBlock && questionBlock.dataset.answered === "true") return;
+    var qIdx = parseInt(btn.getAttribute("data-question-index"), 10);
+    var oIdx = parseInt(btn.getAttribute("data-option-index"), 10);
+    var correctIdx = parseInt(btn.getAttribute("data-correct-index"), 10);
+    var isCorrect = oIdx === correctIdx;
+    var questions = (currentSidebarPoll && currentSidebarPoll.questions) || [];
+    var q = questions[qIdx];
+    var options = (q && q.options) || [];
+    var correctText = options[correctIdx];
+    var explanationEl = questionBlock ? questionBlock.querySelector(".poll-explanation") : null;
+
+    if (isCorrect) {
+      btn.classList.add("correct");
+      if (explanationEl) explanationEl.textContent = "Correct!";
+      if (questionBlock) questionBlock.dataset.answered = "true";
+      if (questionBlock) questionBlock.dataset.correct = "true";
+    } else {
+      btn.classList.add("wrong", "shake");
+      if (explanationEl) explanationEl.textContent = "Incorrect. The correct answer was: " + (correctText || "—") + ".";
+      if (questionBlock) questionBlock.dataset.answered = "true";
+      var correctBtn = questionBlock && questionBlock.querySelector('.poll-option-btn[data-option-index="' + correctIdx + '"]');
+      if (correctBtn) correctBtn.classList.add("correct");
+    }
+
+    // When all questions are answered (correct or wrong), collapse sidebar and start cooldown so no loop
+    setTimeout(function () {
+      var allQuestions = container.querySelectorAll(".poll-question");
+      var allAnswered = allQuestions.length > 0;
+      allQuestions.forEach(function (el) { if (el.dataset.answered !== "true") allAnswered = false; });
+      if (allAnswered) {
+        allQuestions.forEach(function (el) { el.classList.add("answered-correct"); });
+        setTimeout(function () {
+          collapseSidebarAfterAnswered();
+        }, 600);
+      }
+    }, isCorrect ? 800 : 400);
+  });
 }
 
 function openSidebarIfCollapsed() {
@@ -308,6 +467,8 @@ function clearNudgePopupTimeout() {
 }
 
 function showFocusPopup() {
+  if (Date.now() < nudgeGraceUntil) return; // grace period after questions
+  if (questionRoundActive) return; // do not nudge while user is actively answering a question
   const { overlay } = getFocusPopupElements();
   if (!overlay) {
     return;
@@ -348,6 +509,17 @@ function hideFocusPopup() {
 }
 
 function updateFocusPopup(state) {
+  if (Date.now() < nudgeGraceUntil) {
+    unfocusedSinceMs = null;
+    hideFocusPopup();
+    return;
+  }
+  if (questionRoundActive) {
+    // Freeze nudge logic while question round is active.
+    unfocusedSinceMs = null;
+    hideFocusPopup();
+    return;
+  }
   const now = Date.now();
   // Do not auto-hide popup when user looks back; they must choose "I am back" or "Open focus game"
   if (state === "focused") {
@@ -659,11 +831,11 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
   // Hide the join form
   document.getElementById("join-form").style.display = "none";
   
-  // Show meeting layout (main + engagement sidebar like Zoom Chat/Participants)
+  // Show meeting layout (Zoom UI); sidebar stays hidden until we're actually in the call (join success)
   const meetingLayout = document.getElementById("meeting-layout");
   const sidebar = document.getElementById("engagement-sidebar");
   if (meetingLayout) meetingLayout.classList.add("in-meeting");
-  document.body.classList.add("student-panel-open");
+  document.body.classList.add("student-panel-open", "joining");
   document.body.classList.remove("student-panel-collapsed");
   if (sidebar) sidebar.classList.remove("collapsed");
   document.getElementById("zmmtg-root").style.display = "block";
@@ -687,7 +859,8 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
         userEmail: "",
         success: (success) => {
           console.log("Join success:", success);
-          document.body.classList.add("meeting-active");
+          document.body.classList.remove("joining");
+          document.body.classList.add("meeting-active", "in-call");
           currentMeetingId = String(meetingNumber);
           currentUserId = "u-" + (userName || "user").replace(/\W/g, "_").toLowerCase().slice(0, 30);
           currentUserDisplayName = userName || "Unknown";
@@ -707,6 +880,18 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           } catch (e) {
             console.warn("Chat listener registration failed:", e);
           }
+          // Live transcription: forward to server so poll/question agent gets real-time class context (host must enable "save closed captions")
+          try {
+            ZoomMtg.inMeetingServiceListener("onReceiveTranscriptionMsg", forwardLiveTranscriptionToServer);
+          } catch (e) {
+            console.warn("Transcription listener registration failed:", e);
+          }
+          // Some SDK versions/meeting settings emit caption events with a different name.
+          try {
+            ZoomMtg.inMeetingServiceListener("onReceiveCaptionMessage", forwardLiveTranscriptionToServer);
+          } catch (e) {
+            // Optional listener; ignore if unavailable in this SDK build.
+          }
           var scheme = location.protocol === "https:" ? "https:" : "http:";
           var host = location.hostname || "localhost";
           var reportUrl = scheme + "//" + host + ":5173/report?meetingId=" + encodeURIComponent(currentMeetingId);
@@ -721,9 +906,8 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
           document.getElementById("join-form").style.display = "block";
           var ml = document.getElementById("meeting-layout");
           if (ml) ml.classList.remove("in-meeting");
-          document.body.classList.remove("student-panel-open", "student-panel-collapsed");
+          document.body.classList.remove("student-panel-open", "student-panel-collapsed", "meeting-active", "in-call", "joining");
           document.getElementById("zmmtg-root").style.display = "none";
-          document.body.classList.remove("meeting-active");
           stopEyeTracking();
           closeMeetingWebSocket();
           currentMeetingId = null;
@@ -742,7 +926,7 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
       document.getElementById("join-form").style.display = "block";
       var ml = document.getElementById("meeting-layout");
       if (ml) ml.classList.remove("in-meeting");
-      document.body.classList.remove("student-panel-open", "student-panel-collapsed");
+      document.body.classList.remove("student-panel-open", "student-panel-collapsed", "meeting-active", "in-call", "joining");
       document.getElementById("zmmtg-root").style.display = "none";
       const joinButton = document.getElementById("join-button");
       joinButton.disabled = false;
@@ -752,22 +936,64 @@ function startMeeting(signature, sdkKey, meetingNumber, passWord, userName, role
 }
 
 function triggerMaterialQuiz() {
-  if (!currentMeetingId || !currentUserId) return;
   var scheme = location.protocol === "https:" ? "https:" : "http:";
   var host = location.hostname || "localhost";
-  fetch(scheme + "//" + host + ":" + SERVER_WS_PORT + "/api/meetings/" + encodeURIComponent(currentMeetingId) + "/trigger-material-quiz", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: currentUserId, displayName: currentUserDisplayName || "Unknown" }),
-  })
-    .then(function (res) { return res.ok ? res.json() : null; })
-    .then(function (data) {
+  var apiBase = scheme + "//" + host + ":" + SERVER_WS_PORT;
+  var localhostBase = "http://localhost:" + SERVER_WS_PORT;
+
+  if (!currentMeetingId || !currentUserId) {
+    showSidebarHint("Join a meeting first, then try the question again.");
+    return;
+  }
+
+  sidebarQuizCooldownUntil = 0; // allow this round's response to show; next questions only after next disengagement
+  var url = "/api/meetings/" + encodeURIComponent(currentMeetingId) + "/trigger-material-quiz";
+  var body = JSON.stringify({ userId: currentUserId, displayName: currentUserDisplayName || "Unknown" });
+  var opts = { method: "POST", headers: { "Content-Type": "application/json" }, body: body };
+
+  showSidebarHint("Loading question…");
+
+  function doFetch(base) {
+    return fetch(base + url, opts)
+      .then(function (res) {
+        if (!res.ok) {
+          return res.json().catch(function () { return {}; }).then(function (data) {
+            var err = new Error(data.error || "Server error " + res.status);
+            err.status = res.status;
+            throw err;
+          });
+        }
+        return res.json();
+      });
+  }
+
+  function onData(data) {
       if (data && data.poll && data.poll.questions && data.poll.questions.length > 0) {
         showPollInSidebar(data.poll);
-        showPollPopup(data.poll);
+        clearSidebarHint();
+    } else if (data && data.hint) {
+      showSidebarHint(data.hint);
+    } else {
+      showSidebarHint("No question right now. Add CLAUDE_API_KEY in server/.env and ensure transcript or lecture is available.");
+    }
+  }
+
+  doFetch(apiBase)
+    .then(onData)
+    .catch(function (err) {
+      if (err.status === 404 && apiBase !== localhostBase) {
+        doFetch(localhostBase).then(onData).catch(function (e2) {
+          showSidebarHint("Backend 404. Start the engagement server: cd server && node index.js (port 3000). " + (e2.message || ""));
+        });
+      } else {
+        var msg = err.message || "";
+        if (msg.indexOf("404") !== -1 || (err.status === 404)) {
+          showSidebarHint("Backend returned 404. Start the engagement server on port 3000: cd server && node index.js (not the Zoom auth server on 4000).");
+        } else {
+          showSidebarHint("Could not load question. Is the server running at " + apiBase + "? " + msg);
+        }
       }
-    })
-    .catch(function () {});
+    });
 }
 
 function bindSidebarToggle() {
@@ -802,11 +1028,12 @@ function bindPollPopupClose() {
 
 // Handle page leave
 window.addEventListener("beforeunload", () => {
-  document.body.classList.remove("meeting-active");
+  document.body.classList.remove("meeting-active", "in-call", "joining");
   currentMeetingId = null;
   currentUserId = null;
   currentUserDisplayName = null;
   focusPopupShowCount = 0;
+  sidebarQuizCooldownUntil = 0;
   stopEyeTracking();
   closeMeetingWebSocket();
   ZoomMtg.endMeeting({});

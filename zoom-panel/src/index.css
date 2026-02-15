@@ -281,3 +281,19 @@ body {
   border-radius: 8px;
   font-size: 13px;
 }
+
+.transcript-view {
+  margin-top: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.transcript-line {
+  margin: 4px 0;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.transcript-line:last-child {
+  border-bottom: none;
+}

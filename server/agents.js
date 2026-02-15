@@ -60,7 +60,12 @@ async function callClaudeJSON(system, user) {
   if (!textBlock || textBlock.type !== "text") {
     throw new Error("No text content in response");
   }
-  return extractJSON(textBlock.text);
+  try {
+    return extractJSON(textBlock.text);
+  } catch (e) {
+    console.warn("Claude response was not valid JSON:", (textBlock.text || "").slice(0, 200));
+    return null;
+  }
 }
 
 // agent #1: engagement summarizer
@@ -116,7 +121,8 @@ export async function engagementSummarizerAgent(meeting) {
 
   const system = `
 You are an engagement summarizer for a live Zoom class.
-You ONLY analyze engagement signals (polls, chat, attention scores).
+Analyze engagement signals (polls, chat, attention scores).
+When recentTranscriptSnippets is provided, use it to summarize what was covered in class in the "summary" field (1-2 sentences: topic/material covered + engagement).
 An active chat user is someone who sends at least one message (chat_messages >= 1).
 For each user, assign engagement 1 (low), 2 (medium), or 3 (high).
 Return STRICT JSON:
@@ -124,12 +130,19 @@ Return STRICT JSON:
   "class_engagement": 1|2|3,
   "per_user": [{"userId": "...", "engagement": 1|2|3, "reason": "short"}],
   "cold_students": ["userId", ...],
-  "summary": "1-2 sentences",
+  "summary": "1-2 sentences (include what was covered if transcript provided)",
   "needs_intervention": true|false
 }
 `;
 
-  const user = JSON.stringify({ users });
+  const transcriptSnippets = meeting.recentTranscriptSnippets || [];
+  const transcriptPreview = transcriptSnippets.length
+    ? transcriptSnippets.slice(-5).map((s) => (s && s.text ? s.text : '')).join(' ').slice(0, 1500)
+    : '';
+  const user = JSON.stringify({
+    users,
+    ...(transcriptPreview ? { recentTranscriptSnippets: transcriptPreview } : {}),
+  });
   const summary = await callClaudeJSON(system, user);
   
   // Enrich with full participant contexts for chaining
@@ -229,44 +242,93 @@ Return STRICT JSON only:
   return await callClaudeJSON(system, user);
 }
 
-// agent 4: quiz/poll generation agent
-// NOW PERSONALIZED TO PARTICIPANT CONTEXT
-export async function quizPollAgent(participantContext, classContext) {
-  const difficulty = participantContext.recommendedDifficulty || participantContext.engagement;
-  const topic = classContext.currentTopic || 'current lesson';
-  const transcriptSnippet = classContext.recentTranscript || '';
-  
-  const system = `
-You are a quiz generator for a Zoom class.
-Generate 2-3 personalized questions for THIS SPECIFIC participant based on their engagement level.
-If difficulty=1 (low engagement), keep questions basic and encouraging.
-If difficulty=2-3, make questions more challenging.
-Focus on the recent topic/transcript provided.
+// agent 3b: transcribing agent – turns raw transcript + optional lecture into one clean "lecture content" for the poll agent
+// Use this when live transcript is flaky or you want one place to normalize what was taught before generating questions.
+export async function transcribingAgent(transcriptSnippets = [], uploadedLecture = '', summaryFallback = '') {
+  const rawLines = (transcriptSnippets || [])
+    .map((s) => (s && s.text ? String(s.text).trim() : ''))
+    .filter(Boolean);
+  const rawTranscript = rawLines.join(' ').trim().slice(0, 6000);
+  const lecture = (uploadedLecture || '').trim().slice(0, 4000);
+  const summary = (summaryFallback || '').trim().slice(0, 2000);
 
-Return JSON:
-{
-  "userId": "string",
-  "topic": "...",
-  "difficulty": 1|2|3,
-  "questions": [
-    { "id": "q1", "type": "mcq", "question": "...", "options": ["..."], "correctIndex": 0 },
-    { "id": "q2", "type": "open", "question": "..." }
-  ],
-  "encouragement": "short encouraging message for this participant"
-}
-No additional explanations.
+  const system = `
+You are a lecture transcriber for a live class. You receive raw live caption snippets from Zoom (often fragmentary or repeated) and optional uploaded lecture notes.
+
+Your job: produce ONE clean "lecture content" block that will be used to generate quiz questions. Merge fragments into coherent sentences, drop filler (um, uh), fix obvious repeats. If the host provided uploaded lecture notes, include those so the scope of the class is clear. If raw transcript is empty but lecture notes or a summary exist, use those as the lecture content.
+
+Return JSON only:
+{ "lectureContent": "one coherent paragraph or a few sentences of what was covered in class, or empty string if nothing usable" }
+Do not add commentary. Just the JSON.
 `;
 
   const user = JSON.stringify({
-    participant: {
-      userId: participantContext.userId,
-      displayName: participantContext.displayName,
-      engagement: participantContext.engagement,
-      signals: participantContext.signals
-    },
+    rawTranscript: rawTranscript || '(no live transcript)',
+    uploadedLecture: lecture || '(none)',
+    summaryFallback: summary || '(none)',
+  });
+
+  const out = await callClaudeJSON(system, user);
+  const content = (out && out.lectureContent != null) ? String(out.lectureContent).trim() : '';
+  return { lectureContent: content };
+}
+
+// agent 4: quiz/poll generation agent – lecture/transcript-based questions only (fed by transcribing agent when used)
+// Backward-compatible: supports both new signature (participantContext, classContext)
+// and legacy calls (topic, snippet, engagement).
+export async function quizPollAgent(participantContext, classContext, legacyEngagement) {
+  const isLegacy = typeof participantContext === 'string';
+  const normalizedParticipant = isLegacy
+    ? {
+        userId: 'class',
+        displayName: 'Class',
+        engagement: Number(legacyEngagement) || 2,
+        recommendedDifficulty: Number(legacyEngagement) || 2,
+        signals: {},
+      }
+    : (participantContext || {});
+
+  const normalizedClass = isLegacy
+    ? {
+        currentTopic: participantContext || 'current lesson',
+        recentTranscript: (classContext || ''),
+        uploadedLecture: '',
+      }
+    : (classContext || {});
+
+  const difficulty = normalizedParticipant.recommendedDifficulty || normalizedParticipant.engagement || 2;
+  const topic = normalizedClass.currentTopic || 'current lesson';
+  const transcriptSnippet = (normalizedClass.recentTranscript || '').trim();
+  const uploadedLecture = (normalizedClass.uploadedLecture || '').trim();
+
+  // Combined "allowed" material: what was said (transcript) + optional uploaded lecture so we don't ask out-of-context questions
+  const allowedMaterial = [transcriptSnippet, uploadedLecture].filter(Boolean).join('\n\n---\n\n') || '(no material provided)';
+
+  const system = `
+You are a quiz generator for a live class. Generate questions based ONLY on the material provided below.
+
+Rules:
+1. Use ONLY the material below (live transcript and/or uploaded lecture). Every question must be answerable from this material. Do not ask about topics not covered here.
+2. Generate 1-3 multiple-choice questions that check understanding of specific facts or concepts in the material that was actually spoken/taught.
+3. If the material is empty or too short to derive meaningful questions, return exactly: { "questions": [] }
+4. Do not invent content. Base each question on something explicitly stated or clearly implied in the material.
+
+Return JSON only:
+{
+  "topic": "brief topic from the material",
+  "questions": [
+    { "id": "q1", "type": "mcq", "question": "...", "options": ["...", "..."], "correctIndex": 0 },
+    { "id": "q2", "type": "mcq", "question": "...", "options": ["...", "..."], "correctIndex": 0 }
+  ]
+}
+Use "mcq" with "options" and "correctIndex" for multiple choice. No other text.
+`;
+
+  const user = JSON.stringify({
+    allowedMaterial,
+    hasUploadedLecture: !!uploadedLecture,
     difficulty,
     topic,
-    transcriptSnippet,
   });
 
   return await callClaudeJSON(system, user);

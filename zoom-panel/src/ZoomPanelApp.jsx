@@ -2,12 +2,23 @@ import React, { useState, useEffect, useCallback } from 'react';
 import zoomSdk from '@zoom/appssdk';
 
 const DEFAULT_MEETING_ID = 'demo';
-const DEFAULT_API_BASE = ''; // use relative /api when proxied
+const DEFAULT_API_BASE = ''; // set VITE_API_BASE=http://localhost:3000 when running against this backend
+const WS_PORT = 3000; // same as server
 
 function getApiBase() {
   return typeof import.meta.env?.VITE_API_BASE === 'string' && import.meta.env.VITE_API_BASE
     ? import.meta.env.VITE_API_BASE.replace(/\/$/, '')
     : DEFAULT_API_BASE;
+}
+
+function getWsUrl(meetingId) {
+  const apiBase = getApiBase();
+  if (apiBase) {
+    const u = new URL(apiBase);
+    const scheme = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${scheme}//${u.host}/ws?meetingId=${encodeURIComponent(meetingId)}`;
+  }
+  return `ws://localhost:${WS_PORT}/ws?meetingId=${encodeURIComponent(meetingId)}`;
 }
 
 export default function ZoomPanelApp() {
@@ -23,6 +34,8 @@ export default function ZoomPanelApp() {
   const [pollLoading, setPollLoading] = useState(false);
   const [error, setError] = useState(null);
   const [collapsed, setCollapsed] = useState(false);
+  const [transcriptLines, setTranscriptLines] = useState([]);
+  const [transcriptLoading, setTranscriptLoading] = useState(false);
 
   const apiBase = getApiBase();
 
@@ -63,24 +76,48 @@ export default function ZoomPanelApp() {
     return () => { cancelled = true; };
   }, []);
 
+  // WebSocket: receive POLL_SUGGESTION and NUDGE from backend (same as zoomapp)
+  useEffect(() => {
+    if (!meetingId) return;
+    const wsUrl = getWsUrl(meetingId);
+    let ws;
+    try {
+      ws = new WebSocket(wsUrl);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'POLL_SUGGESTION' && msg.payload?.poll) {
+            setPoll(msg.payload.poll);
+          }
+        } catch (_) {}
+      };
+      ws.onclose = () => { ws = null; };
+    } catch (e) {
+      console.warn('Panel WebSocket failed:', e);
+    }
+    return () => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.close();
+    };
+  }, [meetingId]);
+
+  // Run agents: POST /api/tick (this backend)
   const runAgents = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const url = apiBase
-        ? `${apiBase}/api/meetings/${encodeURIComponent(meetingId)}/run-agents`
-        : `/api/meetings/${encodeURIComponent(meetingId)}/run-agents`;
+      const url = apiBase ? `${apiBase}/api/tick` : '/api/tick';
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: '{}',
+        body: JSON.stringify({ meetingId }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      setEngagementSummary(data.engagementSummary ?? null);
-      setEngagement(data.engagementSummary?.class_engagement ?? null);
-      const act = data.action && typeof data.action === 'object' ? data.action : data;
-      setAction(act);
+      const summary = data.summary ?? null;
+      const decision = data.decision ?? null;
+      setEngagementSummary(summary);
+      setEngagement(summary?.class_engagement ?? null);
+      setAction(decision ? { action: decision.action, reason: decision.reason } : null);
       if (data.poll) setPoll(data.poll);
     } catch (e) {
       setError(e.message);
@@ -89,17 +126,18 @@ export default function ZoomPanelApp() {
     }
   }, [apiBase, meetingId]);
 
+  // Generate material quiz: POST /api/meetings/:meetingId/trigger-material-quiz (this backend)
   const generatePoll = useCallback(async () => {
     setPollLoading(true);
     setError(null);
     try {
       const url = apiBase
-        ? `${apiBase}/api/meetings/${encodeURIComponent(meetingId)}/generate-poll`
-        : `/api/meetings/${encodeURIComponent(meetingId)}/generate-poll`;
+        ? `${apiBase}/api/meetings/${encodeURIComponent(meetingId)}/trigger-material-quiz`
+        : `/api/meetings/${encodeURIComponent(meetingId)}/trigger-material-quiz`;
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic: 'Quick check' }),
+        body: JSON.stringify({ userId, displayName }),
       });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
@@ -109,18 +147,18 @@ export default function ZoomPanelApp() {
     } finally {
       setPollLoading(false);
     }
-  }, [apiBase, meetingId]);
+  }, [apiBase, meetingId, userId, displayName]);
 
+  // Self report: POST /api/events (this backend)
   const sendSelfReport = useCallback(
     async (value) => {
       try {
-        const url = apiBase
-          ? `${apiBase}/api/meetings/${encodeURIComponent(meetingId)}/events`
-          : `/api/meetings/${encodeURIComponent(meetingId)}/events`;
+        const url = apiBase ? `${apiBase}/api/events` : '/api/events';
         await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+            meetingId,
             type: 'SELF_REPORT',
             userId,
             displayName,
@@ -133,6 +171,46 @@ export default function ZoomPanelApp() {
     },
     [apiBase, meetingId, userId, displayName]
   );
+
+  // Transcript reader: GET transcript, Load sample
+  const fetchTranscript = useCallback(async () => {
+    setTranscriptLoading(true);
+    setError(null);
+    try {
+      const url = apiBase
+        ? `${apiBase}/api/meetings/${encodeURIComponent(meetingId)}/transcript`
+        : `/api/meetings/${encodeURIComponent(meetingId)}/transcript`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setTranscriptLines(data.lines ?? []);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }, [apiBase, meetingId]);
+
+  const loadSampleTranscript = useCallback(async () => {
+    setTranscriptLoading(true);
+    setError(null);
+    try {
+      const url = apiBase
+        ? `${apiBase}/api/meetings/${encodeURIComponent(meetingId)}/transcript/load-sample`
+        : `/api/meetings/${encodeURIComponent(meetingId)}/transcript/load-sample`;
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) throw new Error(await res.text());
+      await fetchTranscript();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setTranscriptLoading(false);
+    }
+  }, [apiBase, meetingId, fetchTranscript]);
+
+  useEffect(() => {
+    if (sdkReady && meetingId) fetchTranscript();
+  }, [sdkReady, meetingId, fetchTranscript]);
 
   if (!sdkReady) {
     return (
@@ -197,6 +275,27 @@ export default function ZoomPanelApp() {
               {pollLoading ? 'Generating…' : 'Generate poll'}
             </button>
           </div>
+
+          <section className="panel-section">
+            <h2 className="panel-section-title">Transcript</h2>
+            <button type="button" className="btn btn-small" onClick={fetchTranscript} disabled={transcriptLoading}>
+              Refresh
+            </button>
+            <button type="button" className="btn btn-small" onClick={loadSampleTranscript} disabled={transcriptLoading}>
+              Load sample
+            </button>
+            <div className="transcript-view">
+              {transcriptLines.length === 0 && !transcriptLoading && (
+                <p className="panel-summary">No transcript yet. Load sample to test.</p>
+              )}
+              {transcriptLines.slice(-15).map((line, i) => (
+                <p key={i} className="transcript-line">
+                  {line.speaker && <strong>{line.speaker}: </strong>}
+                  {(line.text || '').slice(0, 200)}{(line.text || '').length > 200 ? '…' : ''}
+                </p>
+              ))}
+            </div>
+          </section>
 
           <section className="panel-section">
             <h2 className="panel-section-title">Quick check-in</h2>

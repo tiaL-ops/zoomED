@@ -5,7 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import { WebSocketServer } from 'ws';
-import { quizPollAgent, engagementSummarizerAgent, meetingCoordinatorAgent, nudgeAgent } from './agents.js';
+import { quizPollAgent, engagementSummarizerAgent, meetingCoordinatorAgent, nudgeAgent, orchestrateEngagementSystem } from './agents.js';
 import { updateLeaderboard } from './leaderboard.js';
 import dotenv from 'dotenv';
 
@@ -220,6 +220,55 @@ app.post('/api/tick', async (req, res) => {
     res.json(result);
   } catch (err) {
     console.error('Error in /api/tick:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----- NEW: Multi-agent orchestrator endpoint (per-participant chains) -----
+app.post('/api/orchestrate', async (req, res) => {
+  const { meetingId } = req.body;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'meeting not found' });
+  
+  try {
+    // Run the orchestrated multi-agent system
+    const result = await orchestrateEngagementSystem(meeting, { 
+      meetingType: 'education' 
+    });
+    
+    // Store results in meeting state
+    meeting.lastOrchestrationResult = result;
+    meeting.lastSummary = result.summary;
+    
+    // Broadcast nudges to clients
+    for (const nudge of result.nudges) {
+      if (canNudgeUser(meetingId, nudge.userId)) {
+        recordNudgeSent(meetingId, nudge.userId);
+        broadcast(meetingId, { 
+          type: 'NUDGE', 
+          payload: { 
+            userId: nudge.userId, 
+            displayName: nudge.displayName, 
+            message: nudge.message, 
+            reason: nudge.reason 
+          } 
+        });
+      }
+    }
+    
+    // Broadcast quizzes to clients
+    for (const quiz of result.quizzes) {
+      broadcast(meetingId, { 
+        type: 'PERSONALIZED_QUIZ', 
+        payload: quiz 
+      });
+    }
+    
+    res.json(result);
+  } catch (err) {
+    console.error('Error in /api/orchestrate:', err);
     res.status(500).json({ error: err.message });
   }
 });

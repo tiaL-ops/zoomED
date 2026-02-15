@@ -109,12 +109,28 @@ Return STRICT JSON:
   "class_engagement": 1|2|3,
   "per_user": [{"userId": "...", "engagement": 1|2|3, "reason": "short"}],
   "cold_students": ["userId", ...],
-  "summary": "1-2 sentences"
+  "summary": "1-2 sentences",
+  "needs_intervention": true|false
 }
 `;
 
   const user = JSON.stringify({ users });
-  return await callClaudeJSON(system, user);
+  const summary = await callClaudeJSON(system, user);
+  
+  // Enrich with full participant contexts for chaining
+  summary.participantContexts = users.map(u => {
+    const engagement = summary.per_user.find(pu => pu.userId === u.userId);
+    return {
+      userId: u.userId,
+      displayName: u.displayName,
+      engagement: engagement?.engagement || 2,
+      reason: engagement?.reason || '',
+      signals: u.signals,
+      needsAttention: summary.cold_students.includes(u.userId)
+    };
+  });
+  
+  return summary;
 }
 
 // agent #2: meeting coordinator agent
@@ -152,59 +168,202 @@ Give GENERATE_POLL or PROMPT_INSTRUCTOR when class_engagement is 1 or many cold_
 }
 
 // agent #3: nudge agent – first line of defense: gentle nudge with leeway (away, restroom, parent, etc.)
-export async function nudgeAgent(summary, options = {}) {
-  const meetingType = options.meetingType || 'education'; // 'education' | 'meeting'
-  const cold = summary.cold_students || [];
-  const perUser = summary.per_user || [];
-  const lowEngagement = perUser.filter((u) => u.engagement === 1).map((u) => ({ userId: u.userId, displayName: u.displayName, reason: u.reason }));
-
+// NOW WORKS ON SINGLE PARTICIPANT
+export async function nudgeAgent(participantContext, classContext) {
+  const meetingType = classContext.meetingType || 'education'; // 'education' | 'meeting'
+  
   const system = `
-You are a nudge agent for a live meeting. Your job is to suggest short, supportive messages to re-engage attendees who appear disengaged.
+You are a nudge agent for a live meeting. Your job is to create a short, supportive message to re-engage THIS SPECIFIC attendee who appears disengaged.
 Give them leeway: they might be away briefly, in the restroom, or have a parent or someone else speaking to them. The nudge should be kind and assume good intent—not punishment or guilt. Frame as "when you're back, we'd love to have you with us" or "no rush—rejoin when you're ready."
 For education: warm, encouraging, understanding.
 For adult/professional meetings: neutral, professional (e.g. "When you're free, we'd love your input").
-Only suggest nudges for the low-engagement users provided. One nudge per user; keep each message to 1–2 short sentences.
-Return STRICT JSON only, no other text:
+Keep the message to 1–2 short sentences.
+
+Also decide if this participant needs follow-up (quiz/poll) based on their engagement pattern.
+
+Return STRICT JSON only:
 {
-  "nudges": [
-    { "userId": "string", "displayName": "string", "message": "short supportive message", "reason": "short" }
-  ]
+  "userId": "string",
+  "displayName": "string",
+  "message": "short supportive message",
+  "reason": "why this nudge",
+  "needsQuiz": true|false,
+  "recommendedDifficulty": 1|2|3
 }
-If there are no low-engagement users to nudge, return: { "nudges": [] }.
 `;
 
   const user = JSON.stringify({
     meetingType,
-    lowEngagement,
-    cold_students: cold,
-    class_summary: summary.summary,
+    participant: {
+      userId: participantContext.userId,
+      displayName: participantContext.displayName,
+      engagement: participantContext.engagement,
+      reason: participantContext.reason,
+      signals: participantContext.signals
+    },
+    classContext: {
+      overallEngagement: classContext.class_engagement,
+      classSummary: classContext.summary,
+      currentTopic: classContext.currentTopic || 'general'
+    }
   });
+  
   return await callClaudeJSON(system, user);
 }
 
 // agent 4: quiz/poll generation agent
-export async function quizPollAgent(topic, transcriptSnippet, engagementLevel) {
+// NOW PERSONALIZED TO PARTICIPANT CONTEXT
+export async function quizPollAgent(participantContext, classContext) {
+  const difficulty = participantContext.recommendedDifficulty || participantContext.engagement;
+  const topic = classContext.currentTopic || 'current lesson';
+  const transcriptSnippet = classContext.recentTranscript || '';
+  
   const system = `
 You are a quiz generator for a Zoom class.
-Input: topic, engagement_level (1-3), transcriptSnippet.
-Generate 2-3 short questions that test THIS snippet only.
-If engagement_level=1, keep questions basic.
+Generate 2-3 personalized questions for THIS SPECIFIC participant based on their engagement level.
+If difficulty=1 (low engagement), keep questions basic and encouraging.
+If difficulty=2-3, make questions more challenging.
+Focus on the recent topic/transcript provided.
+
 Return JSON:
 {
+  "userId": "string",
   "topic": "...",
+  "difficulty": 1|2|3,
   "questions": [
     { "id": "q1", "type": "mcq", "question": "...", "options": ["..."], "correctIndex": 0 },
     { "id": "q2", "type": "open", "question": "..." }
-  ]
+  ],
+  "encouragement": "short encouraging message for this participant"
 }
-No explanations.
+No additional explanations.
 `;
 
   const user = JSON.stringify({
+    participant: {
+      userId: participantContext.userId,
+      displayName: participantContext.displayName,
+      engagement: participantContext.engagement,
+      signals: participantContext.signals
+    },
+    difficulty,
     topic,
-    engagement_level: engagementLevel,
     transcriptSnippet,
   });
 
   return await callClaudeJSON(system, user);
+}
+
+// ============================================
+// MULTI-AGENT ORCHESTRATION
+// ============================================
+
+/**
+ * Execute the agent chain for a single participant:
+ * nudgeAgent → quizPollAgent (if needed)
+ */
+export async function executeParticipantChain(participantContext, classContext) {
+  const result = {
+    userId: participantContext.userId,
+    displayName: participantContext.displayName,
+    engagement: participantContext.engagement,
+    actions: []
+  };
+
+  try {
+    // Step 1: Generate nudge for this participant
+    console.log(`[Chain] Running nudgeAgent for ${participantContext.displayName}`);
+    const nudgeResult = await nudgeAgent(participantContext, classContext);
+    result.actions.push({
+      agent: 'nudge',
+      output: nudgeResult
+    });
+
+    // Step 2: If nudge recommends quiz, generate personalized quiz
+    if (nudgeResult.needsQuiz) {
+      console.log(`[Chain] Running quizPollAgent for ${participantContext.displayName}`);
+      const enrichedContext = {
+        ...participantContext,
+        recommendedDifficulty: nudgeResult.recommendedDifficulty
+      };
+      const quizResult = await quizPollAgent(enrichedContext, classContext);
+      result.actions.push({
+        agent: 'quiz',
+        output: quizResult
+      });
+    }
+
+    result.success = true;
+  } catch (error) {
+    console.error(`[Chain] Error for ${participantContext.displayName}:`, error);
+    result.success = false;
+    result.error = error.message;
+  }
+
+  return result;
+}
+
+/**
+ * Main orchestrator: Runs the entire multi-agent system
+ * 1. engagementSummarizerAgent (analyzes all participants)
+ * 2. Fan out: executeParticipantChain for each low-engagement participant
+ * 3. Aggregate and return results
+ */
+export async function orchestrateEngagementSystem(meeting, options = {}) {
+  console.log('[Orchestrator] Starting multi-agent engagement system...');
+  
+  const classContext = {
+    meetingId: meeting.meetingId,
+    meetingType: options.meetingType || 'education',
+    currentTopic: meeting.currentTopic || null,
+    recentTranscript: (meeting.recentTranscriptSnippets || []).join(' '),
+    timestamp: Date.now()
+  };
+
+  // Step 1: Run engagement summarizer (orchestrator agent)
+  console.log('[Orchestrator] Running engagementSummarizerAgent...');
+  const summary = await engagementSummarizerAgent(meeting);
+  classContext.class_engagement = summary.class_engagement;
+  classContext.summary = summary.summary;
+
+  // Step 2: Identify participants needing intervention
+  const participantsNeedingHelp = summary.participantContexts.filter(
+    p => p.needsAttention || p.engagement === 1
+  );
+
+  console.log(`[Orchestrator] Found ${participantsNeedingHelp.length} participants needing intervention`);
+
+  // Step 3: Execute parallel chains for each participant
+  const participantResults = await Promise.all(
+    participantsNeedingHelp.map(participant => 
+      executeParticipantChain(participant, classContext)
+    )
+  );
+
+  // Step 4: Aggregate results
+  const aggregatedResults = {
+    timestamp: classContext.timestamp,
+    meetingId: meeting.meetingId,
+    summary: {
+      classEngagement: summary.class_engagement,
+      totalParticipants: summary.participantContexts.length,
+      participantsNeedingHelp: participantsNeedingHelp.length,
+      classSummary: summary.summary
+    },
+    interventions: participantResults,
+    // Convenience accessors
+    nudges: participantResults
+      .filter(r => r.success)
+      .map(r => r.actions.find(a => a.agent === 'nudge')?.output)
+      .filter(Boolean),
+    quizzes: participantResults
+      .filter(r => r.success)
+      .map(r => r.actions.find(a => a.agent === 'quiz')?.output)
+      .filter(Boolean)
+  };
+
+  console.log('[Orchestrator] Multi-agent system complete');
+  console.log(`[Orchestrator] Generated ${aggregatedResults.nudges.length} nudges, ${aggregatedResults.quizzes.length} quizzes`);
+
+  return aggregatedResults;
 }

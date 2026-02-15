@@ -230,32 +230,45 @@
             display: none;
             position: fixed;
             left: 50%;
-            top: 24px;
+            top: 20px;
             transform: translateX(-50%);
             z-index: 9997;
-            background: rgba(26, 29, 33, 0.92);
-            color: #fff;
-            padding: 10px 18px;
-            border-radius: 24px;
-            font-size: 13px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: #1e293b;
+            padding: 10px 16px 10px 14px;
+            border-radius: 999px;
+            font-size: 14px;
+            font-weight: 500;
             align-items: center;
             gap: 12px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.04);
         }
         #focus-tracking-on-bar.visible {
             display: flex;
         }
+        #focus-tracking-on-bar .focus-status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            flex-shrink: 0;
+        }
         #focus-tracking-turn-off-btn {
-            background: transparent;
-            color: #fff;
-            border: 1px solid rgba(255,255,255,0.5);
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-size: 12px;
+            background: #f1f5f9;
+            color: #475569;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 500;
             cursor: pointer;
+            transition: background 0.15s ease, color 0.15s ease;
         }
         #focus-tracking-turn-off-btn:hover {
-            background: rgba(255,255,255,0.15);
+            background: #e2e8f0;
+            color: #334155;
         }
         #focus-tracking-reopen-btn {
             display: none;
@@ -415,14 +428,15 @@
     <div id="focus-tracking-opt-in" aria-label="Focus tracking opt-in" role="dialog" aria-modal="true">
         <div id="focus-tracking-card">
             <h2>Focus tracking</h2>
-            <p>Use your camera for attention cues. Only you control when it's on.</p>
+            <p>Enabling will automatically turn on your camera for attention cues. Only you control when it's on.</p>
             <div class="popup-actions">
-                <button type="button" id="enable-focus-tracking-btn">Enable focus tracking</button>
+                <button type="button" id="enable-focus-tracking-btn">Enable focus tracking (turns on camera)</button>
                 <button type="button" id="focus-tracking-not-now-btn">Not now</button>
             </div>
         </div>
     </div>
     <div id="focus-tracking-on-bar" aria-live="polite">
+        <span class="focus-status-dot" aria-hidden="true"></span>
         <span>Focus tracking on</span>
         <button type="button" id="focus-tracking-turn-off-btn">Turn off</button>
     </div>

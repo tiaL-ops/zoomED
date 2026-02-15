@@ -17,8 +17,9 @@ let unfocusedSinceMs = null;
 let lastFocusPopupMs = 0;
 let meetingWs = null;
 const FOCUS_POPUP_COOLDOWN_MS = 7000;   // 7 sec between popups (was 12)
-const UNFOCUSED_TRIGGER_MS = 1500;      // 1.5 sec looking away to trigger (was 2)
+const UNFOCUSED_TRIGGER_MS = 5000;     // 5 sec looking away before popup (notes, pen, etc. should not trigger)
 const NUDGE_POPUP_AUTO_QUESTION_MS = 18000;  // 18 sec: if user doesn't pick, trigger question agent
+const FOCUS_GAME_URL = "http://localhost:5173";
 const SERVER_WS_PORT = 3000;
 const ATTENTION_POST_INTERVAL_MS = 5000;  // throttle attention events to server
 let currentMeetingId = null;
@@ -207,28 +208,32 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
 
   const avgEAR = (leftEAR + rightEAR) / 2;
   const eyesClosed = avgEAR < 0.18;
-  // Tighter "focused" band so looking slightly away triggers refocus sooner
-  const gazeCentered =
-    gazePointNormalized.x > 0.42 &&
-    gazePointNormalized.x < 0.58 &&
-    gazePointNormalized.y > 0.38 &&
-    gazePointNormalized.y < 0.62;
+  // Wider "focused" band so typing at keyboard / quick glances don't trigger "not paying attention"
+  const gazeFocused =
+    gazePointNormalized.x > 0.32 &&
+    gazePointNormalized.x < 0.68 &&
+    gazePointNormalized.y > 0.26 &&
+    gazePointNormalized.y < 0.74;
+  const gazeNear = gazePointNormalized.x > 0.20 && gazePointNormalized.x < 0.80 &&
+    gazePointNormalized.y > 0.18 && gazePointNormalized.y < 0.82;
 
   const leftIrisRatio = getIrisHorizontalRatio(landmarks, leftIris, 33, 133);
   const rightIrisRatio = getIrisHorizontalRatio(landmarks, rightIris, 362, 263);
-  const irisCentered =
+  const irisFocused =
     leftIrisRatio !== null &&
     rightIrisRatio !== null &&
-    leftIrisRatio > 0.38 &&
-    leftIrisRatio < 0.62 &&
-    rightIrisRatio > 0.38 &&
-    rightIrisRatio < 0.62;
+    leftIrisRatio > 0.30 &&
+    leftIrisRatio < 0.70 &&
+    rightIrisRatio > 0.30 &&
+    rightIrisRatio < 0.70;
 
   let state = "distracted";
   if (eyesClosed) {
     state = "bored";
-  } else if (gazeCentered && irisCentered) {
+  } else if (gazeFocused && irisFocused) {
     state = "focused";
+  } else if (gazeNear) {
+    state = "slightly_away";
   }
 
   console.log("Attention:", {
@@ -250,7 +255,7 @@ function logAttentionState(landmarks, gazePointNormalized, leftIris, rightIris) 
   if (currentMeetingId && currentUserId && eyeTracker) {
     if (now - lastAttentionPostMs >= ATTENTION_POST_INTERVAL_MS) {
       lastAttentionPostMs = Date.now();
-      var score = state === "focused" ? 0.85 : state === "bored" ? 0.2 : 0.45;
+      var score = state === "focused" ? 0.85 : state === "bored" ? 0.2 : state === "slightly_away" ? 0.65 : 0.45;
       postEventToServer({
         type: "ATTENTION_SCORE",
         userId: currentUserId,
@@ -315,6 +320,7 @@ function updateFocusPopup(state) {
     return;
   }
 
+  // Only show popup for clearly bored or distracted; "slightly_away" (e.g. typing at keyboard) does not trigger
   if (state !== "bored" && state !== "distracted") {
     return;
   }

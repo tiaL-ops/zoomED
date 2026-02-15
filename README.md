@@ -7,15 +7,11 @@ yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
 ```
 start-all.bat
 ```
-<<<<<<< HEAD
-# MACCCCC - to run (at highest level)
+# mac - to run (at highest level)
 ```
 chmod +x start-all.sh
 ./start-all.sh
 ```
-=======
-
->>>>>>> 5f7493e (removed curl commands, fully autonomous updates)
 # zoom working but very basic, need to figure out how to record meeting 
 
 in the meantime:
@@ -94,9 +90,7 @@ open http://localhost:8080
 
 current pages
 
-* `/videoapp` → see engagement (gaze); optional: send `meetingId`/`userId` to feed agents
-* `/poll` → generate quizzes (from static summary.txt or live meeting if `?meetingId=` has data)
-* `/report` → teacher report: latest engagement summary, **engagement over time** (high vs low by window), **recent nudges sent**, and popup every 5 min when connected via WebSocket
+* `/` and `/report` → engagement dashboard: latest summary, **engagement over time** (graph + list), and popup every 10 min when connected via WebSocket
 
 see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit together.
 
@@ -104,7 +98,7 @@ see **ARCHITECTURE.md** for how the multi-agent pipeline, events, and report fit
 
 # new additions
 
-* **single server (index.js)** – meeting state, WebSocket, and all agents now run in one process: `/api/events`, `/api/tick`, `/api/report`, and a 5‑minute periodic summary that pushes to connected clients
+* **single server (index.js)** – meeting state, WebSocket, and all agents now run in one process: `/api/events`, `/api/tick`, `/api/report`, and a 10‑minute periodic summary that pushes to connected clients
 * **gaze → agents** – optional `meetingId` / `userId` in `/api/analyze-gaze` stores attention as events so the engagement summarizer can use them
 * **teacher report** – `/report` page: latest engagement summary, **time-based engagement** (“high here vs low here”), and **recent nudges sent**
 * **nudge agent** – new agent that sends **supportive, in-the-moment nudges** to low-engagement attendees (not punishment). Runs automatically with the summarizer; nudges are broadcast over WebSocket so the **attendee** sees a refocus popup. Rate-limited (same user at most once per 4 min)
@@ -122,9 +116,8 @@ You can run everything without manual `curl` or POST commands:
    - Sends `participant_joined` to bootstrap the meeting
    - Forwards all **chat messages** to the server
    - Sends **attention scores** (when you enable focus tracking) every 5 seconds
-3. **Agents run automatically** every 5 minutes; no `POST /api/tick` needed.
-4. **Teacher report:** Click **"Teacher: Open Report"** in the zoomapp (shown when in meeting) to open the Report page with the meeting ID pre-filled. Or open `http://localhost:5173/report?meetingId=YOUR_ZOOM_MEETING_ID`.
-5. **VideoApp (optional):** Open `/videoapp?meetingId=X&userId=Y` and start the camera to feed gaze into the same meeting. Useful when using the VideoApp standalone (not via zoomapp).
+3. **Agents run automatically** every 10 minutes; no `POST /api/tick` needed.
+4. **Teacher report:** Click **"Teacher: Open Report"** in the zoomapp (shown when in meeting) to open the dashboard with the meeting ID pre-filled. Or open `http://localhost:5173/report?meetingId=YOUR_ZOOM_MEETING_ID`.
 
 ---
 
@@ -148,19 +141,14 @@ npm install
 npm run dev
 ```
 
-then open **http://localhost:5173**.
+then open **http://localhost:5173** (engagement dashboard).
 
-## 2. test the poll page
-
-* go to **Poll**. You can leave **Meeting ID** as `default` (or set it to match your curl/Zoom meeting).
-* click **Generate Student Quizzes**. If there’s no live data for that meeting, you’ll see demo quizzes from `server/summary.txt` (Maya, Carlos, Liam). If there is live data (e.g. after step 4), you’ll see polls from the escalated meeting. **Later this same Meeting ID can come from the Zoom link.**
-
-## 3. test the report page (no data yet)
+## 2. test the report page (no data yet)
 
 * go to **report**, leave meeting ID as default and click refresh report
 * should see error like “no meeting or no data yet” (expected until events exist).
 
-## 4. TESTING FUNCTION: send events and run agents , will be live zoom data later
+## 3. TESTING FUNCTION: send events and run agents , will be live zoom data later
 
 * **first option – POST events by hand (e.g. curl):**
 
@@ -182,30 +170,28 @@ curl -X POST http://localhost:3000/api/tick \
   -d '{"meetingId":"default"}'
 ```
 
-* go back to **Report**, click refresh — you should see a summary (class engagement, per-user, cold students) and last decision.
-* **Link to Poll:** open **Poll**, set Meeting ID to `default` (same as in the curl `meetingId`), click Generate. With live data you’ll see polls from this meeting (escalation-after-nudge). Later the meeting ID will come from the Zoom link instead of curl.
+* go back to **Report**, click **Update summary** — you should see a summary (class engagement, per-user, students losing focus) and last decision.
 
-## 5. test the 5‑minute popup
+## 4. test the 10-minute popup
 
 * stay on report with meeting ID `default`.  
-* ensure you’ve sent at least one event and run `/api/tick` (or wait for the server’s 5‑minute timer)
+* ensure you’ve sent at least one event and run `/api/tick` (or wait for the server’s 10‑minute timer)
 * the page connects via WebSocket (you’ll see **● Live** when connected)
-* every 5 minutes the server runs the summarizer and pushes `SUMMARY_UPDATE`; a **popup** should appear with the latest summary. (to test without waiting, temporarily change `SUMMARY_INTERVAL_MS` in `server/index.js` to e.g. `60 * 1000` for 1 minute.)
+* every 10 minutes the server runs the summarizer and pushes `SUMMARY_UPDATE`; a **popup** should appear with the latest summary. (to test without waiting, temporarily change `SUMMARY_INTERVAL_MS` in `server/index.js` to e.g. `60 * 1000` for 1 minute.)
 
-## 6. test gaze feeding into meeting state (optional)
+## 5. test gaze feeding into meeting state (optional)
 
-* open **VideoApp** with URL params: `/videoapp?meetingId=default&userId=u1`
-* start the camera and send gaze; attention is stored for that `meetingId`/`userId`
-* run **report** or wait for the 5‑minute periodic summary to see attention in the summary. (The zoomapp also sends attention when focus tracking is enabled—no URL params needed.)
+* In the **zoomapp**, enable focus tracking in a meeting; attention is sent to the server for that meeting.
+* On the **Report** (or wait for the 10‑minute periodic summary) you’ll see attention in the summary.
 
-## 7. test the nudge agent (refocus popup for attendees)
+## 6. test the nudge agent (refocus popup for attendees)
 
 * send events that create at least one low-engagement user (e.g. `userId: "u2"` with no chat and low/no attention), then run **POST /api/tick** with `meetingId: "default"`
 * on the **Report** page, enter a **Preview as attendee (userId)** value that matches someone who got a nudge (e.g. `u2` or `Sam`), and stay on the page with WebSocket connected
 * after the next agent run (or run `/api/tick` again), the server broadcasts `NUDGE` for that user; the Report page shows a **“Quick check-in” popup** with the supportive message (this is what the attendee would see in the Zoom app)
 * the Report page also shows **Engagement over time** and **Recent nudges sent** so the teacher can see when engagement was high vs low and what nudges were sent
 
-## 8. test chat from Zoom app (live meeting chat → engagement summarizer)
+## 7. test chat from Zoom app (live meeting chat → engagement summarizer)
 
 Chat messages sent during a Zoom meeting are forwarded to the server and used by the engagement summarizer (alongside polls and attention scores).
 
@@ -226,7 +212,7 @@ Chat messages sent during a Zoom meeting are forwarded to the server and used by
 3. **Send a chat message** in the Zoom meeting (to Everyone or the host). The zoomapp listens for `onReceiveChatMsg` and forwards each message to `POST /api/events` as `type: "CHAT_MESSAGE"`.
 
 4. **Verify chat in engagement summary:**
-   * Run `POST /api/tick` with your meeting ID (or wait for the 5‑minute periodic run).
+   * Run `POST /api/tick` with your meeting ID (or wait for the 10‑minute periodic run).
    * Open **Report**, set Meeting ID to your Zoom meeting ID, and refresh. The summary should include chat activity in per-user engagement.
 
 **Note:** Only participants whose client runs the zoomapp will forward chat. Typically the **host** runs the zoomapp and forwards all chat messages to the backend.

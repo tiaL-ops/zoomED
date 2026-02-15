@@ -412,6 +412,16 @@ app.post('/api/nudge-timeout', async (req, res) => {
   }
 });
 
+// ----- End meeting: mark as ended so report shows "engagement over the meeting" as final -----
+app.post('/api/meeting-ended', (req, res) => {
+  const { meetingId } = req.body;
+  if (!meetingId) return res.status(400).json({ error: 'missing meetingId' });
+  const meeting = meetingState[meetingId];
+  if (!meeting) return res.status(404).json({ error: 'no meeting or no data yet' });
+  meeting.endedAt = new Date().toISOString();
+  res.json({ ok: true, endedAt: meeting.endedAt });
+});
+
 // ----- Report for teacher: latest summary, time-based engagement, recent nudges -----
 app.get('/api/report', (req, res) => {
   const { meetingId } = req.query;
@@ -424,6 +434,7 @@ app.get('/api/report', (req, res) => {
     lastDecision: meeting.lastDecision ?? null,
     eventCount: (meeting.events || []).length,
     engagementHistory: meeting.engagementHistory ?? [],
+    endedAt: meeting.endedAt ?? null,
     // Nudges omitted from teacher report to give students leeway; only question/poll escalation is shown
   };
   res.json(report);
@@ -632,7 +643,7 @@ wss.on('connection', (ws, req) => {
 });
 
 // ----- Periodic: same nudge-first flow — summarizer → nudge → escalate to poll only if sustained low -----
-const SUMMARY_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SUMMARY_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 setInterval(async () => {
   for (const meetingId of Object.keys(meetingState)) {
     const meeting = meetingState[meetingId];
@@ -649,7 +660,7 @@ setInterval(async () => {
         summary: summary.summary,
       });
       if (meeting.engagementHistory.length > 50) meeting.engagementHistory = meeting.engagementHistory.slice(-50);
-      broadcast(meetingId, { type: 'SUMMARY_UPDATE', payload: { summary, at: new Date().toISOString() } });
+      broadcast(meetingId, { type: 'SUMMARY_UPDATE', payload: { summary, studentsLosingFocus: summary.cold_students || [], at: new Date().toISOString() } });
       // Nudge first (leeway for away/restroom/parent)
       const nudgeResult = await nudgeAgent(summary, { meetingType: 'education' }).catch((e) => ({ nudges: [] }));
       const nudges = nudgeResult.nudges || [];

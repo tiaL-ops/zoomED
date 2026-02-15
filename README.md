@@ -3,13 +3,15 @@ yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
 ---
 # baddies look at this to run everything, if we change run instructions change the bat pretty please :cry:
 
-# to run (at highest level)
+# to run (at highest level) - windows
 ```
 start-all.bat
 ```
-
-
-
+# MACCCCC - to run (at highest level)
+```
+chmod +x start-all.sh
+./start-all.sh
+```
 # zoom working but very basic, need to figure out how to record meeting 
 
 in the meantime:

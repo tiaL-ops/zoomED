@@ -1,7 +1,54 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
-const WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+const API_ORIGIN =
+  import.meta.env.VITE_API_ORIGIN ||
+  (window.location.port === '5173' ? '' : 'http://localhost:3000');
+const API_CANDIDATES = Array.from(
+  new Set([
+    API_ORIGIN,
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    '',
+  ].filter((v) => v !== undefined && v !== null))
+);
+const WS_URL = API_ORIGIN
+  ? `${API_ORIGIN.replace(/^http/, 'ws')}/ws`
+  : `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`;
+
+async function parseJsonSafe(res) {
+  const text = await res.text();
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (_) {
+    return { raw: text };
+  }
+}
+
+async function fetchJsonWithFallback(path, options = {}) {
+  let lastError = null;
+  for (const base of API_CANDIDATES) {
+    const url = `${base}${path}`;
+    try {
+      const res = await fetch(url, options);
+      const data = await parseJsonSafe(res);
+      const contentType = res.headers.get('content-type') || '';
+      const looksJson = contentType.includes('application/json');
+      if (!res.ok) {
+        lastError = new Error(data.error || `${res.status} ${res.statusText}`);
+        continue;
+      }
+      if (!looksJson && data.raw) {
+        lastError = new Error(`Non-JSON response from ${url}`);
+        continue;
+      }
+      return { data, base };
+    } catch (e) {
+      lastError = e;
+    }
+  }
+  throw lastError || new Error('API unavailable on all fallback origins');
+}
 
 function formatEngagement(n) {
   if (n == null) return '—';
@@ -119,22 +166,20 @@ function Report() {
     setError(null);
     try {
       if (runSummaryFirst) {
-        const tickRes = await fetch('/api/tick', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ meetingId: meetingId.trim() }),
-        });
-        if (!tickRes.ok) {
-          const data = await tickRes.json().catch(() => ({}));
-          setError(data.error || 'Could not run instant summary; showing latest saved report.');
+        try {
+          await fetchJsonWithFallback('/api/tick', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ meetingId: meetingId.trim() }),
+          });
+        } catch (e) {
+          setError(e?.message || 'Could not run instant summary; showing latest saved report.');
         }
       }
-      const res = await fetch(`/api/report?meetingId=${encodeURIComponent(meetingId.trim())}`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || res.statusText);
+      const { data } = await fetchJsonWithFallback(`/api/report?meetingId=${encodeURIComponent(meetingId.trim())}`);
+      if (!data || typeof data !== 'object' || !('meetingId' in data)) {
+        throw new Error('API did not return a valid report payload. Make sure backend is running on port 3000.');
       }
-      const data = await res.json();
       setReport(data);
     } catch (e) {
       const msg = e?.message || 'Unknown error';
@@ -193,15 +238,11 @@ function Report() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/meeting-ended', {
+      await fetchJsonWithFallback('/api/meeting-ended', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ meetingId: meetingId.trim() }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || res.statusText);
-      }
       await fetchReport();
     } catch (e) {
       setError(e.message);

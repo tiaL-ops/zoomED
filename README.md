@@ -4,9 +4,9 @@ yay treehacks this is sm fun i lurv zoom and multi-agent claude systems yay
 # baddies look at this to run everything, if we change run instructions change the bat pretty please :cry:
 
 # to run (at highest level)
-'''
+```
 start-all.bat
-''''
+```
 
 
 
